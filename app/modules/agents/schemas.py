@@ -41,12 +41,21 @@ class SessionSummary(BaseModel):
     updated_at: datetime
 
 
+class TokenUsage(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cached_input_tokens: int = 0
+    reasoning_tokens: int = 0
+
+
 class SessionEntry(BaseModel):
     id: str
     seq: int
     parent_id: str | None
     role: Literal["user", "assistant", "tool"]
     content: str
+    run_id: str | None = None
+    usage: TokenUsage | None = None
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     tool_call_id: str | None = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
@@ -82,6 +91,7 @@ class RunAccepted(BaseModel):
     session_id: str
     status: Literal["accepted", "running"]
     accepted_at: datetime
+    title_generation: Literal["auxiliary", "primary_fallback", "skipped"] = "skipped"
 
 
 class RunStatus(BaseModel):

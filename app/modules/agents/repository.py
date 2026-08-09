@@ -115,6 +115,34 @@ class MongoAgentRepository:
             raise AppError("session_not_found", "Session was not found", status_code=404)
         return _session_summary(document)
 
+    async def automatic_title_target(
+        self, principal: Principal, session_id: str
+    ) -> str | None:
+        session = await self._owned_session(principal, session_id)
+        title = str(session.get("title") or "").strip()
+        if session.get("surface", "insight") != "insight":
+            return None
+        return title if title.casefold() in {"new insight", "new session"} else None
+
+    async def apply_generated_title(
+        self,
+        session_id: str,
+        owner_id: str,
+        expected_title: str,
+        title: str,
+    ) -> bool:
+        result = await self._database.agent_sessions.update_one(
+            {"_id": session_id, "owner_id": owner_id, "title": expected_title},
+            {
+                "$set": {
+                    "title": title,
+                    "title_generated_at": datetime.now(UTC),
+                    "updated_at": datetime.now(UTC),
+                }
+            },
+        )
+        return result.modified_count == 1
+
     async def delete_session(self, principal: Principal, session_id: str) -> None:
         await self._owned_session(principal, session_id)
         active = await self._database.agent_operations.find_one(
@@ -184,6 +212,17 @@ class MongoAgentRepository:
             path.append(entry)
             entry_id = entry.get("parent_id")
         path.reverse()
+        run_ids = list({str(document["run_id"]) for document in path if document.get("run_id")})
+        usage_by_run: dict[str, Document] = {}
+        if run_ids:
+            operations = await self._database.agent_operations.find(
+                {"_id": {"$in": run_ids}}, {"usage": 1}
+            ).to_list(None)
+            usage_by_run = {
+                str(operation["_id"]): operation["usage"]
+                for operation in operations
+                if isinstance(operation.get("usage"), dict)
+            }
         active = lane.get("active_operation")
         return SessionSnapshot(
             session=_session_summary(session),
@@ -191,7 +230,10 @@ class MongoAgentRepository:
             lane="main",
             leaf_id=lane.get("leaf_id"),
             active_run_id=active.get("id") if isinstance(active, dict) else None,
-            entries=[_session_entry(document) for document in path],
+            entries=[
+                _session_entry(document, usage_by_run.get(str(document.get("run_id", ""))))
+                for document in path
+            ],
         )
 
     async def accept_run(
@@ -806,13 +848,15 @@ def _session_summary(document: Document) -> SessionSummary:
     )
 
 
-def _session_entry(document: Document) -> SessionEntry:
+def _session_entry(document: Document, usage: Document | None = None) -> SessionEntry:
     return SessionEntry(
         id=document["_id"],
         seq=document["seq"],
         parent_id=document.get("parent_id"),
         role=document["role"],
         content=document.get("content", ""),
+        run_id=document.get("run_id"),
+        usage=usage,
         tool_calls=document.get("tool_calls", []),
         tool_call_id=document.get("tool_call_id"),
         attachments=document.get("attachments", []),

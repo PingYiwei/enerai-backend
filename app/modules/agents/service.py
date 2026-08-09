@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 
 from app.core.config import Settings
 from app.core.errors import AppError
@@ -13,9 +14,10 @@ from app.modules.agents.providers.registry import ProviderId, ProviderRegistry
 from app.modules.agents.repository import MongoAgentRepository
 from app.modules.agents.schemas import RunAccepted, RunCreate
 from app.modules.agents.studio_tools import studio_tools
+from app.modules.agents.titles import generate_session_title
 from app.modules.agents.tools import Tool
 from app.modules.agents.types import JsonObject, Message
-from app.modules.auth.model_settings import resolve_provider_runtime
+from app.modules.auth.model_settings import configured_auxiliary_model, resolve_provider_runtime
 
 
 class AgentRunCoordinator:
@@ -23,6 +25,7 @@ class AgentRunCoordinator:
         self._settings = settings
         self._providers = providers
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._title_tasks: set[asyncio.Task[None]] = set()
 
     async def start(
         self,
@@ -54,6 +57,21 @@ class AgentRunCoordinator:
             api_key=runtime.api_key,
             base_url=runtime.base_url,
         )
+        title_target = await repository.automatic_title_target(principal, session_id)
+        auxiliary_model = (
+            await configured_auxiliary_model(
+                repository.database, principal.user_id, provider_id
+            )
+            if title_target is not None
+            else ""
+        )
+        title_mode = (
+            "auxiliary"
+            if title_target is not None and auxiliary_model
+            else "primary_fallback"
+            if title_target is not None
+            else "skipped"
+        )
         accepted = await repository.accept_run(
             principal,
             session_id,
@@ -66,7 +84,22 @@ class AgentRunCoordinator:
             name=f"agent-run:{accepted.id}",
         )
         self._track(accepted.id, task)
-        return accepted
+        if title_target is not None:
+            title_task = asyncio.create_task(
+                self._generate_title(
+                    repository=repository,
+                    run_id=accepted.id,
+                    session_id=session_id,
+                    owner_id=principal.user_id,
+                    expected_title=title_target,
+                    user_message=request.content,
+                    provider=provider,
+                    model=auxiliary_model or model,
+                ),
+                name=f"session-title:{accepted.id}",
+            )
+            self._track_title(title_task)
+        return accepted.model_copy(update={"title_generation": title_mode})
 
     async def recover(self, repository: MongoAgentRepository) -> tuple[int, int]:
         accepted, interrupted = await repository.recover_incomplete_runs()
@@ -115,6 +148,10 @@ class AgentRunCoordinator:
 
         task.add_done_callback(forget)
 
+    def _track_title(self, task: asyncio.Task[None]) -> None:
+        self._title_tasks.add(task)
+        task.add_done_callback(self._title_tasks.discard)
+
     async def abort(
         self,
         repository: MongoAgentRepository,
@@ -132,12 +169,48 @@ class AgentRunCoordinator:
         await repository.finish_run(run_id, "cancelled")
 
     async def close(self) -> None:
-        tasks = list(self._tasks.values())
+        tasks = [*self._tasks.values(), *self._title_tasks]
         for task in tasks:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._tasks.clear()
+        self._title_tasks.clear()
+
+    async def _generate_title(
+        self,
+        *,
+        repository: MongoAgentRepository,
+        run_id: str,
+        session_id: str,
+        owner_id: str,
+        expected_title: str,
+        user_message: str,
+        provider: OpenAICompatibleProvider,
+        model: str,
+    ) -> None:
+        try:
+            title = await generate_session_title(provider, model, user_message)
+            if not title:
+                raise ValueError("Title model returned an empty title")
+            updated = await repository.apply_generated_title(
+                session_id, owner_id, expected_title, title
+            )
+            if updated:
+                await repository.append_event(
+                    run_id,
+                    "session_title_updated",
+                    {"session_id": session_id, "title": title},
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            with suppress(Exception):
+                await repository.append_event(
+                    run_id,
+                    "session_title_failed",
+                    {"session_id": session_id, "error": type(error).__name__},
+                )
 
     async def _execute(
         self,

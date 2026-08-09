@@ -159,6 +159,14 @@ async def resolve_provider_runtime(
     )
 
 
+async def configured_auxiliary_model(
+    database: AsyncDatabase[Document], owner_id: str, provider: ProviderId
+) -> str:
+    document = await database.user_model_settings.find_one({"_id": owner_id})
+    saved = _saved_providers(document).get(provider, {})
+    return ModelRoles.model_validate(saved.get("models") or {}).auxiliary
+
+
 def _saved_providers(document: Document | None) -> dict[str, Document]:
     if document is None or not isinstance(document.get("providers"), dict):
         return {}
