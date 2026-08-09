@@ -1,0 +1,52 @@
+[project]
+name = "nodex-backend"
+version = "0.1.0"
+description = "Project-centric Nodex API and durable agent runtime"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography>=45,<50",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "jsonschema>=4.25,<5",
+  "pwdlib[argon2]>=0.2,<1",
+  "pydantic[email]>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "pyjwt>=2.10,<3",
+  "pymongo>=4.17,<5",
+  "python-multipart>=0.0.20,<1",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+  "types-jsonschema>=4.25,<5",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+exclude = [".venv", ".uv-cache"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
