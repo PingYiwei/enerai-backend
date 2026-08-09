@@ -163,7 +163,5 @@ def _saved_providers(document: Document | None) -> dict[str, Document]:
     if document is None or not isinstance(document.get("providers"), dict):
         return {}
     return {
-        str(key): value
-        for key, value in document["providers"].items()
-        if isinstance(value, dict)
+        str(key): value for key, value in document["providers"].items() if isinstance(value, dict)
     }

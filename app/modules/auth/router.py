@@ -107,7 +107,7 @@ async def create_key(
         "owner_id": principal.user_id,
         "username": principal.username,
         "name": body.name.strip(),
-        "prefix": f"{secret[:12]}…{secret[-4:]}",
+        "prefix": f"{secret[:12]}...{secret[-4:]}",
         "key_hash": key_hash,
         "created_at": now,
         "last_used_at": None,

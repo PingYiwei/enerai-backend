@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
 
     provider_secret_key: SecretStr | None = None
-    default_provider: Literal["openai", "openrouter", "bailian"] = "openrouter"
+    default_provider: Literal["openai", "openrouter", "bailian"] = "bailian"
     openai_base_url: str = "https://api.openai.com/v1"
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     bailian_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"

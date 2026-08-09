@@ -81,13 +81,16 @@ def _normalize_categories(documents: list[Document]) -> list[CategoryGroup]:
 
     for document in documents:
         nested_children = document.get("children")
-        parent = _document_text(
-            document,
-            "parent",
-            "root_category",
-            "category_group",
-            "family",
-        ) or "Other"
+        parent = (
+            _document_text(
+                document,
+                "parent",
+                "root_category",
+                "category_group",
+                "family",
+            )
+            or "Other"
+        )
 
         if isinstance(nested_children, list):
             candidates = [child for child in nested_children if isinstance(child, dict)]
@@ -99,8 +102,7 @@ def _normalize_categories(documents: list[Document]) -> list[CategoryGroup]:
             if not value:
                 continue
             label = (
-                _document_text(candidate, "label", "category_cn", "name", "display_name")
-                or value
+                _document_text(candidate, "label", "category_cn", "name", "display_name") or value
             )
             grouped.setdefault(parent, {})[value] = CategoryOption(label=label, value=value)
 

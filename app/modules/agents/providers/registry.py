@@ -15,9 +15,7 @@ ProviderId = Literal["openai", "openrouter", "bailian"]
 
 class ProviderRegistry:
     def __init__(self) -> None:
-        self._providers: dict[
-            tuple[ProviderId, ApiStyle, str, str], OpenAICompatibleProvider
-        ] = {}
+        self._providers: dict[tuple[ProviderId, ApiStyle, str, str], OpenAICompatibleProvider] = {}
 
     def get(
         self,
