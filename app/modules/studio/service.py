@@ -98,11 +98,11 @@ def _normalize_categories(documents: list[Document]) -> list[CategoryGroup]:
             candidates = [document]
 
         for candidate in candidates:
-            value = _document_text(candidate, "value", "category", "type", "slug", "_id")
+            value = _document_text(candidate, "_id")
             if not value:
                 continue
             label = (
-                _document_text(candidate, "label", "category_cn", "name", "display_name") or value
+                _document_text(candidate, "name") or value
             )
             grouped.setdefault(parent, {})[value] = CategoryOption(label=label, value=value)
 
@@ -290,7 +290,7 @@ async def save_graph(
     return StudioGraph(
         project_id=project_id,
         revision=next_revision,
-        nodes=nodes,
-        edges=edges,
+        nodes=request.nodes,
+        edges=request.edges,
         updated_at=now,
     )

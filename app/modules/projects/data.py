@@ -388,6 +388,8 @@ def project_rdf(project: Document) -> str:
             add(sensor_ref, "brick:isPointOf", node_ref)
             add(node_ref, "brick:hasPoint", sensor_ref)
         child_ids = data.get("child") if isinstance(data.get("child"), list) else []
+        if child_ids is None:
+            continue
         for child_id in child_ids:
             child = node_by_id.get(str(child_id))
             if not child:
