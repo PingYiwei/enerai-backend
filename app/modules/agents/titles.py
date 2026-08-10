@@ -15,11 +15,11 @@ async def generate_session_title(provider: Provider, model: str, user_message: s
         system_prompt=(
             "Generate one concise title for an EnerAI Insight session from the user's first "
             "message. Match the user's language. Return only the title, without quotes, markdown, "
-            "labels, or explanation. Keep it under 60 characters."
+            "labels, or explanation. Keep it under 40 characters."
         ),
         messages=(Message(role="user", content=user_message[:4000]),),
         temperature=0.2,
-        max_output_tokens=48,
+        # max_output_tokens=48,
     )
     async for event in provider.stream(request):
         if isinstance(event, TextDelta):
