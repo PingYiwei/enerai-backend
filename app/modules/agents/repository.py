@@ -213,16 +213,13 @@ class MongoAgentRepository:
             entry_id = entry.get("parent_id")
         path.reverse()
         run_ids = list({str(document["run_id"]) for document in path if document.get("run_id")})
-        usage_by_run: dict[str, Document] = {}
+        metadata_by_run: dict[str, Document] = {}
         if run_ids:
             operations = await self._database.agent_operations.find(
-                {"_id": {"$in": run_ids}}, {"usage": 1}
+                {"_id": {"$in": run_ids}},
+                {"usage": 1, "status": 1, "created_at": 1, "started_at": 1, "completed_at": 1},
             ).to_list(None)
-            usage_by_run = {
-                str(operation["_id"]): operation["usage"]
-                for operation in operations
-                if isinstance(operation.get("usage"), dict)
-            }
+            metadata_by_run = {str(operation["_id"]): operation for operation in operations}
         active = lane.get("active_operation")
         return SessionSnapshot(
             session=_session_summary(session),
@@ -231,7 +228,7 @@ class MongoAgentRepository:
             leaf_id=lane.get("leaf_id"),
             active_run_id=active.get("id") if isinstance(active, dict) else None,
             entries=[
-                _session_entry(document, usage_by_run.get(str(document.get("run_id", ""))))
+                _session_entry(document, metadata_by_run.get(str(document.get("run_id", ""))))
                 for document in path
             ],
         )
@@ -397,9 +394,10 @@ class MongoAgentRepository:
         return operation, messages
 
     async def mark_running(self, run_id: str) -> bool:
+        now = datetime.now(UTC)
         operation = await self._database.agent_operations.find_one_and_update(
             {"_id": run_id, "status": "accepted"},
-            {"$set": {"status": "running", "updated_at": datetime.now(UTC)}},
+            {"$set": {"status": "running", "started_at": now, "updated_at": now}},
             return_document=ReturnDocument.AFTER,
         )
         return operation is not None
@@ -848,7 +846,8 @@ def _session_summary(document: Document) -> SessionSummary:
     )
 
 
-def _session_entry(document: Document, usage: Document | None = None) -> SessionEntry:
+def _session_entry(document: Document, run_metadata: Document | None = None) -> SessionEntry:
+    run_metadata = run_metadata or {}
     return SessionEntry(
         id=document["_id"],
         seq=document["seq"],
@@ -856,7 +855,10 @@ def _session_entry(document: Document, usage: Document | None = None) -> Session
         role=document["role"],
         content=document.get("content", ""),
         run_id=document.get("run_id"),
-        usage=usage,
+        run_status=run_metadata.get("status"),
+        run_started_at=run_metadata.get("started_at") or run_metadata.get("created_at"),
+        run_completed_at=run_metadata.get("completed_at"),
+        usage=run_metadata.get("usage") if isinstance(run_metadata.get("usage"), dict) else None,
         tool_calls=document.get("tool_calls", []),
         tool_call_id=document.get("tool_call_id"),
         attachments=document.get("attachments", []),

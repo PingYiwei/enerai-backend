@@ -72,14 +72,26 @@ class DataQueryResult(BaseModel):
     data: Any
 
 
-class PointSchemeItem(BaseModel):
-    node_id: str
-    node_name: str
-    node_type: str
-    property: str
+class PropertyPoint(BaseModel):
+    point_name: str
+    device_name: str
+    property_name: str
+    property_name_cn: str = ""
     unit: str = ""
+    data_type: str = ""
+    range: str = ""
+
+
+class SensorPoint(BaseModel):
+    sensor_name: str
+    device_name: str
+    category: str = ""
+    category_cn: str = ""
+    description: str = ""
 
 
 class PointScheme(BaseModel):
-    items: list[PointSchemeItem]
+    inherent: list[PropertyPoint]
+    calculate: list[PropertyPoint]
+    sensor: list[SensorPoint]
     total: int

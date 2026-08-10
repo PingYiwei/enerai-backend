@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import httpx
 from gridfs import AsyncGridFSBucket
@@ -20,8 +21,9 @@ from app.modules.projects.schemas import (
     DataSourceUpdate,
     DataSourceView,
     PointScheme,
-    PointSchemeItem,
     PropertyCatalog,
+    PropertyPoint,
+    SensorPoint,
 )
 
 Document = dict[str, Any]
@@ -118,7 +120,9 @@ async def test_data_source(
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
-                _endpoint(source, "properties_path"), headers=_headers(source)
+                _endpoint(source, "properties_path"),
+                headers=_headers(source),
+                params=_property_query_params(project),
             )
     except httpx.HTTPError as error:
         raise AppError("data_source_unreachable", str(error), status_code=502) from error
@@ -135,8 +139,13 @@ async def properties(
 ) -> PropertyCatalog:
     project = await owned_project(database, principal, project_id)
     source = _configured_source(project)
-    payload = await _request_json("GET", _endpoint(source, "properties_path"), _headers(source))
-    items = payload.get("items", payload) if isinstance(payload, dict) else payload
+    payload = await _request_json(
+        "GET",
+        _endpoint(source, "properties_path"),
+        _headers(source),
+        params=_property_query_params(project),
+    )
+    items = _property_catalog_items(payload)
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
         raise AppError(
             "invalid_data_source_response",
@@ -144,6 +153,44 @@ async def properties(
             status_code=502,
         )
     return PropertyCatalog(items=items, total=len(items))
+
+
+def _property_query_params(project: Document) -> dict[str, str]:
+    node_names: list[str] = []
+    for node in project.get("nodes", []):
+        data = node.get("data")
+        if not isinstance(data, dict):
+            continue
+        name = str(data.get("name") or data.get("label") or "").strip()
+        if name and name not in node_names:
+            node_names.append(name)
+    return {"device_ids": ",".join(node_names)} if node_names else {}
+
+
+def _property_catalog_items(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    data = payload.get("data")
+    devices = data.get("devices") if isinstance(data, dict) else None
+    if isinstance(devices, list):
+        items: list[Document] = []
+        for device in devices:
+            if not isinstance(device, dict):
+                continue
+            device_id = str(device.get("device_id") or "")
+            properties_value = device.get("properties")
+            if not isinstance(properties_value, list):
+                continue
+            for property_value in properties_value:
+                item = (
+                    dict(property_value)
+                    if isinstance(property_value, dict)
+                    else {"name": property_value}
+                )
+                item["device_id"] = device_id
+                items.append(item)
+        return items
+    return payload.get("items", payload)
 
 
 async def query_data(
@@ -180,59 +227,239 @@ async def _request_json(method: str, url: str, headers: dict[str, str], **kwargs
         raise AppError("data_source_request_failed", str(error), status_code=502) from error
 
 
-def point_scheme(project: Document) -> PointScheme:
-    items: list[PointSchemeItem] = []
+def point_scheme(
+    project: Document, property_documents: list[Document] | None = None
+) -> PointScheme:
+    inherent: list[PropertyPoint] = []
+    calculate: list[PropertyPoint] = []
+    sensors: list[SensorPoint] = []
+    properties_by_category = {
+        str(document.get("root_category")): document.get("properties", [])
+        for document in property_documents or []
+        if document.get("root_category") and isinstance(document.get("properties"), list)
+    }
     for node in project.get("nodes", []):
         data = node.get("data", {})
-        if not isinstance(data, dict) or not data.get("property"):
+        if not isinstance(data, dict):
             continue
-        items.append(
-            PointSchemeItem(
-                node_id=str(node["id"]),
-                node_name=str(data.get("label") or node["id"]),
-                node_type=str(node.get("type", "equipment")),
-                property=str(data["property"]),
-                unit=str(data.get("unit", "")),
+        device_name = str(data.get("name") or data.get("label") or node.get("id") or "")
+        for sensor in data.get("sensors", []):
+            if not isinstance(sensor, dict):
+                continue
+            sensors.append(
+                SensorPoint(
+                    sensor_name=str(sensor.get("name") or sensor.get("id") or ""),
+                    device_name=device_name,
+                    category=str(sensor.get("category") or ""),
+                    category_cn=str(sensor.get("category_cn") or ""),
+                    description=str(sensor.get("description") or sensor.get("note") or ""),
+                )
             )
+        root_category = str(data.get("root_category") or "")
+        for property_document in properties_by_category.get(root_category, []):
+            if not isinstance(property_document, dict) or not property_document.get("name"):
+                continue
+            property_name = str(property_document["name"])
+            item = PropertyPoint(
+                point_name=f"{device_name}-{_brief_name(property_name)}",
+                device_name=device_name,
+                property_name=property_name,
+                property_name_cn=str(property_document.get("cn_name") or ""),
+                unit=str(property_document.get("unit") or ""),
+                data_type=str(property_document.get("data_type") or ""),
+                range=_format_range(
+                    property_document.get("min_value"), property_document.get("max_value")
+                ),
+            )
+            (inherent if property_document.get("is_inherent") else calculate).append(item)
+    return PointScheme(
+        inherent=inherent,
+        calculate=calculate,
+        sensor=sensors,
+        total=len(inherent) + len(calculate) + len(sensors),
+    )
+
+
+async def project_point_scheme(database: AsyncDatabase[Document], project: Document) -> PointScheme:
+    root_categories = {
+        str(data["root_category"])
+        for node in project.get("nodes", [])
+        if isinstance((data := node.get("data")), dict) and data.get("root_category")
+    }
+    property_documents = (
+        await database.properties.find({"root_category": {"$in": list(root_categories)}}).to_list(
+            None
         )
-    return PointScheme(items=items, total=len(items))
+        if root_categories
+        else []
+    )
+    return point_scheme(project, property_documents)
 
 
 def point_scheme_csv(scheme: PointScheme) -> bytes:
     target = io.StringIO(newline="")
     writer = csv.writer(target)
-    writer.writerow(["node_id", "node_name", "node_type", "property", "unit"])
-    for item in scheme.items:
-        writer.writerow([item.node_id, item.node_name, item.node_type, item.property, item.unit])
+    writer.writerow(
+        [
+            "section",
+            "point_name",
+            "device_name",
+            "property_name",
+            "property_name_cn",
+            "unit",
+            "data_type",
+            "range",
+        ]
+    )
+    for section, items in (("inherent", scheme.inherent), ("calculate", scheme.calculate)):
+        for item in items:
+            writer.writerow(
+                [
+                    section,
+                    item.point_name,
+                    item.device_name,
+                    item.property_name,
+                    item.property_name_cn,
+                    item.unit,
+                    item.data_type,
+                    item.range,
+                ]
+            )
+    for item in scheme.sensor:
+        writer.writerow(
+            [
+                "sensor",
+                item.sensor_name,
+                item.device_name,
+                item.category,
+                item.category_cn,
+                "",
+                "",
+                item.description,
+            ]
+        )
     return target.getvalue().encode("utf-8-sig")
 
 
 def project_rdf(project: Document) -> str:
+    project_name = str(project.get("name") or project.get("_id") or "project").strip()
+    namespace_name = quote(re.sub(r"\s+", "_", project_name), safe="._-~") or "project"
     lines = [
-        "@prefix nodex: <https://nodex.dev/schema#> .",
-        "@prefix project: <https://nodex.dev/project/> .",
+        "@prefix brick: <https://brickschema.org/schema/Brick#> .",
+        "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .",
+        "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
+        f"@prefix enerai: <https://enerai.ai/projects/{namespace_name}#> .",
         "",
+        "enerai:project rdf:type brick:Building .",
+        f'enerai:project rdfs:label "{_turtle(project_name)}" .',
     ]
-    project_ref = f"project:{project['_id']}"
-    lines.append(f'{project_ref} a nodex:Project ; nodex:name "{_turtle(project["name"])}" .')
+    node_by_id = {str(node.get("id")): node for node in project.get("nodes", [])}
     for node in project.get("nodes", []):
-        node_ref = f"project:{project['_id']}/node/{node['id']}"
         data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
-        node_type = _turtle(node.get("type", "equipment"))
-        lines.append(
-            f'{node_ref} a nodex:Equipment ; nodex:type "{node_type}" ; '
-            f'nodex:name "{_turtle(data.get("label", node["id"]))}" .'
-        )
+        name = str(data.get("name") or data.get("label") or node.get("id") or "")
+        if not name:
+            continue
+        node_ref = f"enerai:{_uri_part(name)}"
+        category = _brick_class(node, data)
+        lines.append(f"{node_ref} rdf:type brick:{category} .")
+        lines.append(f'{node_ref} rdfs:label "{_turtle(name)}" .')
+        description = data.get("description") or data.get("note")
+        if description:
+            lines.append(f'{node_ref} rdfs:comment "{_turtle(description)}" .')
+        for sensor in data.get("sensors", []):
+            if not isinstance(sensor, dict):
+                continue
+            sensor_name = str(sensor.get("name") or sensor.get("id") or "")
+            if not sensor_name:
+                continue
+            sensor_ref = f"enerai:{_uri_part(sensor_name)}"
+            sensor_class = _class_part(sensor.get("category") or "Sensor")
+            lines.extend(
+                [
+                    f"{sensor_ref} rdf:type brick:{sensor_class} .",
+                    f'{sensor_ref} rdfs:label "{_turtle(sensor_name)}" .',
+                    f"{node_ref} brick:hasPoint {sensor_ref} .",
+                    f"{sensor_ref} brick:isPointOf {node_ref} .",
+                ]
+            )
+            if sensor.get("id"):
+                lines.append(f'{sensor_ref} enerai:sourceId "{_turtle(sensor["id"])}" .')
+            sensor_description = sensor.get("description") or sensor.get("note")
+            if sensor_description:
+                lines.append(f'{sensor_ref} rdfs:comment "{_turtle(sensor_description)}" .')
+        child_ids = data.get("child") if isinstance(data.get("child"), list) else []
+        for child_id in child_ids:
+            child = node_by_id.get(str(child_id))
+            if not child:
+                continue
+            child_data = child.get("data", {}) if isinstance(child.get("data"), dict) else {}
+            child_name = str(child_data.get("name") or child_data.get("label") or child_id)
+            child_ref = f"enerai:{_uri_part(child_name)}"
+            lines.extend(
+                [
+                    f"{node_ref} brick:hasPart {child_ref} .",
+                    f"{child_ref} brick:isPartOf {node_ref} .",
+                ]
+            )
     for edge in project.get("edges", []):
-        lines.append(
-            f"project:{project['_id']}/node/{edge['source']} nodex:connectedTo "
-            f"project:{project['_id']}/node/{edge['target']} ."
+        source = node_by_id.get(str(edge.get("source")))
+        target = node_by_id.get(str(edge.get("target")))
+        if not source or not target:
+            continue
+        source_data = source.get("data", {}) if isinstance(source.get("data"), dict) else {}
+        target_data = target.get("data", {}) if isinstance(target.get("data"), dict) else {}
+        source_name = source_data.get("name") or source_data.get("label") or source.get("id")
+        target_name = target_data.get("name") or target_data.get("label") or target.get("id")
+        source_ref = f"enerai:{_uri_part(source_name)}"
+        target_ref = f"enerai:{_uri_part(target_name)}"
+        lines.extend(
+            [
+                f"{source_ref} brick:feed {target_ref} .",
+                f"{target_ref} brick:isFedBy {source_ref} .",
+            ]
         )
     return "\n".join(lines) + "\n"
 
 
+def _brief_name(value: str) -> str:
+    return "".join(word[0] for word in value.split("_") if word)
+
+
+def _format_range(minimum: Any, maximum: Any) -> str:
+    if minimum is None and maximum is None:
+        return ""
+    if minimum is None:
+        return f"≤ {maximum}"
+    if maximum is None:
+        return f"≥ {minimum}"
+    return f"{minimum} - {maximum}"
+
+
+def _class_part(value: Any) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9_]+", "_", str(value).strip()).strip("_")
+    return normalized or "Equipment"
+
+
+def _brick_class(node: Document, data: Document) -> str:
+    if node.get("type") == "group":
+        return {"area": "Area", "space": "Space", "group": "Group"}.get(
+            str(data.get("category") or "").lower(), "Group"
+        )
+    return _class_part(data.get("category") or data.get("root_category") or node.get("type"))
+
+
+def _uri_part(value: Any) -> str:
+    return quote(re.sub(r"\s+", "_", str(value).strip()), safe="._-~")
+
+
 def _turtle(value: Any) -> str:
-    return str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
 
 
 async def cleanup_project_resources(

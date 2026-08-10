@@ -7,8 +7,8 @@ from app.modules.projects.data import (
     cleanup_project_resources,
     get_data_source,
     owned_project,
-    point_scheme,
     point_scheme_csv,
+    project_point_scheme,
     project_rdf,
     properties,
     query_data,
@@ -134,7 +134,7 @@ async def rdf(project_id: str, database: Database, principal: CurrentPrincipal) 
 @router.get("/{project_id}/point-scheme", response_model=PointScheme)
 async def points(project_id: str, database: Database, principal: CurrentPrincipal) -> PointScheme:
     project = await owned_project(database, principal, project_id)
-    return point_scheme(project)
+    return await project_point_scheme(database, project)
 
 
 @router.get("/{project_id}/point-scheme/export")
@@ -142,9 +142,10 @@ async def export_points(
     project_id: str, database: Database, principal: CurrentPrincipal
 ) -> Response:
     project = await owned_project(database, principal, project_id)
+    scheme = await project_point_scheme(database, project)
     filename = quote(f"{project['name']}-point-scheme.csv")
     return Response(
-        point_scheme_csv(point_scheme(project)),
+        point_scheme_csv(scheme),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )

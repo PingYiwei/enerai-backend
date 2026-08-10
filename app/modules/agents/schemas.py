@@ -55,6 +55,9 @@ class SessionEntry(BaseModel):
     role: Literal["user", "assistant", "tool"]
     content: str
     run_id: str | None = None
+    run_status: Literal["accepted", "running", "completed", "failed", "cancelled"] | None = None
+    run_started_at: datetime | None = None
+    run_completed_at: datetime | None = None
     usage: TokenUsage | None = None
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     tool_call_id: str | None = None
