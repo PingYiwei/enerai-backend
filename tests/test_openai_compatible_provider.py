@@ -99,7 +99,14 @@ async def test_chat_completions_stream_is_normalized() -> None:
                     Message(
                         role="user",
                         content="Hello",
-                        images=(ImageInput("att", "image.png", "image/png", "aW1hZ2U="),),
+                        images=(
+                            ImageInput(
+                                "att",
+                                "image.png",
+                                "image/png",
+                                "https://minio.enerai.cloud/enerai/image?signature=test",
+                            ),
+                        ),
                     ),
                 ),
             )
@@ -111,7 +118,9 @@ async def test_chat_completions_stream_is_normalized() -> None:
     assert captured["body"]["messages"][0] == {"role": "system", "content": "System"}
     assert captured["body"]["messages"][1]["content"][1] == {
         "type": "image_url",
-        "image_url": {"url": "data:image/png;base64,aW1hZ2U="},
+        "image_url": {
+            "url": "https://minio.enerai.cloud/enerai/image?signature=test"
+        },
     }
     assert TextDelta("Hi ") in events
     assert ToolCallStarted(index=0, id="call_1", name="lookup") in events
@@ -166,7 +175,14 @@ async def test_responses_stream_is_normalized() -> None:
                     Message(
                         role="user",
                         content="Hello",
-                        images=(ImageInput("att", "image.png", "image/png", "aW1hZ2U="),),
+                        images=(
+                            ImageInput(
+                                "att",
+                                "image.png",
+                                "image/png",
+                                "https://minio.enerai.cloud/enerai/image?signature=test",
+                            ),
+                        ),
                     ),
                 ),
             )
@@ -178,7 +194,7 @@ async def test_responses_stream_is_normalized() -> None:
     assert captured["body"]["instructions"] == "System"
     assert captured["body"]["input"][0]["content"][1] == {
         "type": "input_image",
-        "image_url": "data:image/png;base64,aW1hZ2U=",
+        "image_url": "https://minio.enerai.cloud/enerai/image?signature=test",
     }
     assert events[0] == TextDelta("Done")
     assert isinstance(events[1], UsageUpdated)

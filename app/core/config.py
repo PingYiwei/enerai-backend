@@ -33,6 +33,27 @@ class Settings(BaseSettings):
     agent_context_char_budget: int = Field(default=300_000, ge=10_000)
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    minio_endpoint: str = Field(
+        default="127.0.0.1:9000",
+        validation_alias="MINIO_ENDPOINT",
+    )
+    minio_secure: bool = Field(default=False, validation_alias="MINIO_SECURE")
+    minio_access_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="MINIO_ACCESS_KEY",
+    )
+    minio_secret_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="MINIO_SECRET_KEY",
+    )
+    minio_bucket: str = Field(default="enerai", validation_alias="MINIO_BUCKET")
+    minio_presigned_url_minutes: int = Field(
+        default=60,
+        ge=1,
+        le=7 * 24 * 60,
+        validation_alias="MINIO_PRESIGNED_URL_MINUTES",
+    )
+
     provider_secret_key: SecretStr | None = None
     default_provider: Literal["openai", "openrouter", "bailian"] = "openrouter"
     openai_base_url: str = "https://api.openai.com/v1"

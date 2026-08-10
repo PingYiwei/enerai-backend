@@ -11,6 +11,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
 from app.core.ids import new_id
+from app.core.object_storage import get_minio_storage
 from app.core.security import Principal
 from app.modules.agents.schemas import ArtifactList, ArtifactSummary
 from app.modules.agents.tools import Tool, ToolContext
@@ -83,10 +84,14 @@ async def create_artifact(
 
     artifact_id = new_id("art")
     stored_name = safe_file_name(file_name)
-    bucket = AsyncGridFSBucket(database, bucket_name="agent_artifacts")
-    file_id = await bucket.upload_from_stream(
-        stored_name,
-        payload,
+    object_name = (
+        f"artifacts/{context.project_id}/{context.session_id}/{artifact_id}/{stored_name}"
+    )
+    storage = get_minio_storage()
+    stored = await storage.put_bytes(
+        object_name=object_name,
+        content=payload,
+        content_type=media_type,
         metadata={
             "artifact_id": artifact_id,
             "owner_id": context.user_id,
@@ -106,10 +111,17 @@ async def create_artifact(
         "media_type": media_type,
         "size": len(payload),
         "presentation": presentation,
-        "file_id": file_id,
+        "storage_bucket": stored.bucket,
+        "object_name": stored.object_name,
+        "etag": stored.etag,
+        "version_id": stored.version_id,
         "created_at": datetime.now(UTC),
     }
-    await database.artifacts.insert_one(document)
+    try:
+        await database.artifacts.insert_one(document)
+    except Exception:
+        await storage.delete_object(bucket=stored.bucket, object_name=stored.object_name)
+        raise
     return _summary(document)
 
 
@@ -138,9 +150,17 @@ async def read_artifact(
     )
     if document is None:
         raise AppError("artifact_not_found", "Artifact was not found", status_code=404)
-    bucket = AsyncGridFSBucket(database, bucket_name="agent_artifacts")
-    stream = await bucket.open_download_stream(document["file_id"])
-    return _summary(document), await stream.read()
+    if document.get("object_name"):
+        content = await get_minio_storage().get_bytes(
+            bucket=document.get("storage_bucket"),
+            object_name=document["object_name"],
+        )
+    else:
+        # Compatibility for artifacts created before MinIO storage was enabled.
+        bucket = AsyncGridFSBucket(database, bucket_name="agent_artifacts")
+        stream = await bucket.open_download_stream(document["file_id"])
+        content = await stream.read()
+    return _summary(document), content
 
 
 def artifact_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:

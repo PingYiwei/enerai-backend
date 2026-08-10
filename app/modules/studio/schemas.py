@@ -22,6 +22,14 @@ class GraphEdge(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
 
+class StudioSensor(BaseModel):
+    id: str = Field(min_length=1, max_length=160)
+    name: str = Field(min_length=1, max_length=240)
+    category: str = Field(min_length=1, max_length=160)
+    category_cn: str | None = Field(default=None, max_length=240)
+    description: str = Field(default="", max_length=2_000)
+
+
 class StudioGraph(BaseModel):
     project_id: str
     revision: int

@@ -9,6 +9,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
 from app.core.ids import new_id
+from app.core.object_storage import get_minio_storage
 from app.core.security import Principal
 from app.modules.agents.schemas import AttachmentSummary
 
@@ -29,7 +30,15 @@ def detect_image_type(content: bytes) -> str | None:
 
 
 def _summary(document: Document) -> AttachmentSummary:
-    return AttachmentSummary.model_validate(document)
+    return AttachmentSummary(
+        id=document["_id"],
+        project_id=document["project_id"],
+        name=document["name"],
+        media_type=document["media_type"],
+        size=document["size"],
+        status=document["status"],
+        created_at=document["created_at"],
+    )
 
 
 async def create_attachment(
@@ -57,10 +66,18 @@ async def create_attachment(
         )
     attachment_id = new_id("att")
     name = (file.filename or "image").strip()
-    bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
-    file_id = await bucket.upload_from_stream(
-        name,
-        content,
+    extension = {
+        "image/png": "png",
+        "image/jpeg": "jpg",
+        "image/gif": "gif",
+        "image/webp": "webp",
+    }[media_type]
+    object_name = f"chat-images/{project_id}/{attachment_id}.{extension}"
+    storage = get_minio_storage()
+    stored = await storage.put_bytes(
+        object_name=object_name,
+        content=content,
+        content_type=media_type,
         metadata={
             "attachment_id": attachment_id,
             "owner_id": principal.user_id,
@@ -75,10 +92,17 @@ async def create_attachment(
         "media_type": media_type,
         "size": len(content),
         "status": "draft",
-        "file_id": file_id,
+        "storage_bucket": stored.bucket,
+        "object_name": stored.object_name,
+        "etag": stored.etag,
+        "version_id": stored.version_id,
         "created_at": datetime.now(UTC),
     }
-    await database.chat_attachments.insert_one(document)
+    try:
+        await database.chat_attachments.insert_one(document)
+    except Exception:
+        await storage.delete_object(bucket=stored.bucket, object_name=stored.object_name)
+        raise
     return _summary(document)
 
 
@@ -90,9 +114,17 @@ async def read_attachment(
     )
     if document is None:
         raise AppError("attachment_not_found", "Attachment was not found", status_code=404)
-    bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
-    stream = await bucket.open_download_stream(document["file_id"])
-    return _summary(document), await stream.read()
+    if document.get("object_name"):
+        content = await get_minio_storage().get_bytes(
+            bucket=document.get("storage_bucket"),
+            object_name=document["object_name"],
+        )
+    else:
+        # Compatibility for images uploaded before MinIO storage was enabled.
+        bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
+        stream = await bucket.open_download_stream(document["file_id"])
+        content = await stream.read()
+    return _summary(document), content
 
 
 async def delete_draft_attachment(
@@ -107,8 +139,14 @@ async def delete_draft_attachment(
             "Draft attachment was not found",
             status_code=404,
         )
-    bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
-    await bucket.delete(document["file_id"])
+    if document.get("object_name"):
+        await get_minio_storage().delete_object(
+            bucket=document.get("storage_bucket"),
+            object_name=document["object_name"],
+        )
+    else:
+        bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
+        await bucket.delete(document["file_id"])
 
 
 async def cleanup_expired_drafts(database: AsyncDatabase[Document]) -> int:
@@ -120,7 +158,6 @@ async def cleanup_expired_drafts(database: AsyncDatabase[Document]) -> int:
     ).to_list(None)
     if not expired:
         return 0
-    bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
     removed = 0
     for candidate in expired:
         document = await database.chat_attachments.find_one_and_delete(
@@ -128,6 +165,13 @@ async def cleanup_expired_drafts(database: AsyncDatabase[Document]) -> int:
         )
         if document is None:
             continue
-        await bucket.delete(document["file_id"])
+        if document.get("object_name"):
+            await get_minio_storage().delete_object(
+                bucket=document.get("storage_bucket"),
+                object_name=document["object_name"],
+            )
+        else:
+            bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
+            await bucket.delete(document["file_id"])
         removed += 1
     return removed

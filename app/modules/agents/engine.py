@@ -243,5 +243,5 @@ def _message_size(message: Message) -> int:
     return (
         len(message.content)
         + sum(len(call.id) + len(call.name) + len(call.arguments) for call in message.tool_calls)
-        + sum(len(image.data_base64 or "") for image in message.images)
+        + sum(len(image.url or "") for image in message.images)
     )

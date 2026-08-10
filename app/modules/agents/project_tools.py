@@ -1,41 +1,115 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from pymongo.asynchronous.database import AsyncDatabase
+from rdflib import BNode, Graph, Literal, URIRef
+from rdflib.query import ResultRow
 
 from app.core.errors import AppError
 from app.core.security import Principal
 from app.modules.agents.tools import Tool, ToolContext
 from app.modules.agents.types import JsonObject, ToolResult
-from app.modules.projects.data import properties, query_data
+from app.modules.projects.data import owned_project, project_rdf, properties, query_data
 from app.modules.projects.schemas import DataQuery
 
 Document = dict[str, Any]
+_QUERY_FORM = re.compile(
+    r"\A\s*(?:(?:PREFIX\s+(?:[A-Za-z][\w.-]*)?:\s*<[^>]+>|BASE\s*<[^>]+>)\s*)*"
+    r"([A-Za-z]+)\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _rdf_term(value: Any) -> JsonObject:
+    if isinstance(value, URIRef):
+        return {"type": "uri", "value": str(value)}
+    if isinstance(value, Literal):
+        result: JsonObject = {"type": "literal", "value": str(value)}
+        if value.datatype is not None:
+            result["datatype"] = str(value.datatype)
+        if value.language is not None:
+            result["language"] = value.language
+        return result
+    if isinstance(value, BNode):
+        return {"type": "bnode", "value": str(value)}
+    return {"type": "unknown", "value": str(value)}
+
+
+def _validate_query_form(query: str) -> None:
+    without_comments = re.sub(r"(?m)^\s*#.*$", "", query)
+    match = _QUERY_FORM.match(without_comments)
+    if match is None or match.group(1).upper() not in {"SELECT", "ASK"}:
+        raise AppError(
+            "unsupported_rdf_query",
+            "Only read-only SPARQL SELECT and ASK queries are supported",
+            status_code=422,
+        )
 
 
 def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
-    async def get_graph(_: JsonObject, context: ToolContext) -> ToolResult:
-        project = await database.projects.find_one(
-            {"_id": context.project_id, "owner_id": context.user_id},
-            {"name": 1, "graph_revision": 1, "nodes": 1, "edges": 1},
+    async def get_rdf(_: JsonObject, context: ToolContext) -> ToolResult:
+        project = await owned_project(
+            database,
+            Principal(user_id=context.user_id, username=""),
+            context.project_id,
         )
-        if project is None:
-            raise AppError("project_not_found", "Project was not found", status_code=404)
         return ToolResult(
             tool_call_id="",
-            content=json.dumps(
-                {
-                    "name": project["name"],
-                    "revision": project.get("graph_revision", 0),
-                    "nodes": project.get("nodes", []),
-                    "edges": project.get("edges", []),
-                },
-                ensure_ascii=False,
-                separators=(",", ":"),
-            ),
+            content=project_rdf(project),
+            details={"media_type": "text/turtle"},
+        )
+
+    async def query_rdf(arguments: JsonObject, context: ToolContext) -> ToolResult:
+        sparql = str(arguments["query"]).strip()
+        _validate_query_form(sparql)
+        limit = int(arguments.get("limit", 200))
+        project = await owned_project(
+            database,
+            Principal(user_id=context.user_id, username=""),
+            context.project_id,
+        )
+        graph = Graph()
+        graph.parse(data=project_rdf(project), format="turtle")
+        try:
+            result = graph.query(sparql, initNs=dict(graph.namespaces()))
+        except Exception as error:
+            raise AppError(
+                "invalid_rdf_query",
+                f"SPARQL query is invalid: {error}",
+                status_code=422,
+            ) from error
+
+        if result.type == "ASK":
+            payload: JsonObject = {"type": "ASK", "boolean": bool(result.askAnswer)}
+        else:
+            variables = [str(variable) for variable in result.vars or []]
+            bindings: list[JsonObject] = []
+            truncated = False
+            for index, row in enumerate(result):
+                if index >= limit:
+                    truncated = True
+                    break
+                bindings.append(
+                    {
+                        str(variable): _rdf_term(value)
+                        for variable, value in cast(ResultRow, row).asdict().items()
+                        if value is not None
+                    }
+                )
+            payload = {
+                "type": "SELECT",
+                "variables": variables,
+                "bindings": bindings,
+                "returned": len(bindings),
+                "truncated": truncated,
+            }
+        return ToolResult(
+            tool_call_id="",
+            content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         )
 
     async def get_properties(_: JsonObject, context: ToolContext) -> ToolResult:
@@ -49,7 +123,7 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
             content=catalog.model_dump_json(),
         )
 
-    async def query(arguments: JsonObject, context: ToolContext) -> ToolResult:
+    async def query_timeseries(arguments: JsonObject, context: ToolContext) -> ToolResult:
         request = DataQuery(
             property_ids=[str(item) for item in arguments["property_ids"]],
             start=datetime.fromisoformat(str(arguments["start"])),
@@ -69,10 +143,31 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
 
     return (
         Tool(
-            name="get_project_graph",
-            description="Read the current project equipment graph, including node data and edges.",
+            name="get_project_rdf",
+            description=(
+                "Read the current project's semantic equipment model as RDF in Turtle format."
+            ),
             input_schema={"type": "object", "additionalProperties": False},
-            execute=get_graph,
+            execute=get_rdf,
+            effect="read",
+            result_visibility="both",
+        ),
+        Tool(
+            name="query_project_rdf",
+            description=(
+                "Run a read-only SPARQL SELECT or ASK query against the current project's "
+                "RDF model."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "minLength": 1, "maxLength": 20_000},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 1_000},
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+            execute=query_rdf,
             effect="read",
             result_visibility="both",
         ),
@@ -105,7 +200,7 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
                 "required": ["property_ids", "start", "end"],
                 "additionalProperties": False,
             },
-            execute=query,
+            execute=query_timeseries,
             effect="external",
             result_visibility="model",
         ),

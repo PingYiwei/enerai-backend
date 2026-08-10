@@ -4,6 +4,7 @@ import csv
 import io
 import re
 import time
+import zipfile
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote, urljoin, urlparse
@@ -13,6 +14,7 @@ from gridfs import AsyncGridFSBucket
 from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
+from app.core.object_storage import get_minio_storage
 from app.core.security import Principal
 from app.modules.projects.schemas import (
     DataQuery,
@@ -296,49 +298,169 @@ async def project_point_scheme(database: AsyncDatabase[Document], project: Docum
     return point_scheme(project, property_documents)
 
 
+def _point_scheme_rows(scheme: PointScheme) -> list[list[str]]:
+    rows = [[
+        "section",
+        "point_name",
+        "device_name",
+        "property_name",
+        "property_name_cn",
+        "unit",
+        "data_type",
+        "range",
+    ]]
+    for section, items in (("inherent", scheme.inherent), ("calculate", scheme.calculate)):
+        for item in items:
+            rows.append([
+                section,
+                item.point_name,
+                item.device_name,
+                item.property_name,
+                item.property_name_cn,
+                item.unit,
+                item.data_type,
+                item.range,
+            ])
+    for sensor in scheme.sensor:
+        rows.append([
+            "sensor",
+            sensor.sensor_name,
+            sensor.device_name,
+            sensor.category,
+            sensor.category_cn,
+            "",
+            "",
+            sensor.description,
+        ])
+    return rows
+
+
 def point_scheme_csv(scheme: PointScheme) -> bytes:
     target = io.StringIO(newline="")
     writer = csv.writer(target)
-    writer.writerow(
-        [
-            "section",
-            "point_name",
-            "device_name",
-            "property_name",
-            "property_name_cn",
-            "unit",
-            "data_type",
-            "range",
-        ]
-    )
-    for section, items in (("inherent", scheme.inherent), ("calculate", scheme.calculate)):
-        for item in items:
-            writer.writerow(
-                [
-                    section,
-                    item.point_name,
-                    item.device_name,
-                    item.property_name,
-                    item.property_name_cn,
-                    item.unit,
-                    item.data_type,
-                    item.range,
-                ]
-            )
-    for item in scheme.sensor:
-        writer.writerow(
-            [
-                "sensor",
-                item.sensor_name,
-                item.device_name,
-                item.category,
-                item.category_cn,
-                "",
-                "",
-                item.description,
-            ]
-        )
+    writer.writerows(_point_scheme_rows(scheme))
     return target.getvalue().encode("utf-8-sig")
+
+
+def _excel_column_name(index: int) -> str:
+    result = ""
+    while index:
+        index, remainder = divmod(index - 1, 26)
+        result = chr(65 + remainder) + result
+    return result
+
+
+def _xml_text(value: str) -> str:
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+
+
+def _display_width(value: str) -> int:
+    return sum(2 if ord(character) > 255 else 1 for character in value)
+
+
+def point_scheme_xlsx(scheme: PointScheme) -> bytes:
+    rows = _point_scheme_rows(scheme)
+    widths = [
+        min(60, max(12, max(_display_width(row[index]) for row in rows) + 2))
+        for index in range(len(rows[0]))
+    ]
+    columns = "".join(
+        f'<col min="{index}" max="{index}" width="{width}" customWidth="1"/>'
+        for index, width in enumerate(widths, start=1)
+    )
+    sheet_rows: list[str] = []
+    for row_index, row in enumerate(rows, start=1):
+        cells = []
+        for column_index, value in enumerate(row, start=1):
+            reference = f"{_excel_column_name(column_index)}{row_index}"
+            style = 1 if row_index == 1 else 2 if column_index == 8 else 0
+            cells.append(
+                f'<c r="{reference}" s="{style}" t="inlineStr">'
+                f'<is><t xml:space="preserve">{_xml_text(value)}</t></is></c>'
+            )
+        sheet_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+
+    worksheet = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<sheetViews><sheetView workbookViewId="0">'
+        '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
+        '</sheetView></sheetViews>'
+        f'<cols>{columns}</cols><sheetData>{"".join(sheet_rows)}</sheetData>'
+        f'<autoFilter ref="A1:H{len(rows)}"/></worksheet>'
+    )
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font>'
+        '<font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font></fonts>'
+        '<fills count="3"><fill><patternFill patternType="none"/></fill>'
+        '<fill><patternFill patternType="gray125"/></fill>'
+        '<fill><patternFill patternType="solid"><fgColor rgb="FF4472C4"/>'
+        '<bgColor indexed="64"/></patternFill></fill></fills>'
+        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+        '</cellStyleXfs>'
+        '<cellXfs count="3">'
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" '
+        'applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
+        '<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
+        '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/>'
+        '</cellStyles></styleSheet>'
+    )
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" '
+        'ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/xl/workbook.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        '<Override PartName="/xl/worksheets/sheet1.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        '<Override PartName="/xl/styles.xml" '
+        'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        '</Types>'
+    )
+    root_relationships = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+        'Target="xl/workbook.xml"/></Relationships>'
+    )
+    workbook = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<sheets><sheet name="Point Scheme" sheetId="1" r:id="rId1"/></sheets></workbook>'
+    )
+    workbook_relationships = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" '
+        'Target="worksheets/sheet1.xml"/>'
+        '<Relationship Id="rId2" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" '
+        'Target="styles.xml"/></Relationships>'
+    )
+
+    target = io.BytesIO()
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types)
+        archive.writestr("_rels/.rels", root_relationships)
+        archive.writestr("xl/workbook.xml", workbook)
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_relationships)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet)
+        archive.writestr("xl/styles.xml", styles)
+    return target.getvalue()
 
 
 def project_rdf(project: Document) -> str:
@@ -486,18 +608,32 @@ async def cleanup_project_resources(
         if dataset.get("file_id") is not None:
             await bucket.delete(dataset["file_id"])
     attachments = await database.chat_attachments.find(
-        {"project_id": project_id, "owner_id": owner_id}, {"file_id": 1}
+        {"project_id": project_id, "owner_id": owner_id},
+        {"file_id": 1, "storage_bucket": 1, "object_name": 1},
     ).to_list(None)
     chat_bucket = AsyncGridFSBucket(database, bucket_name="chat_files")
     for attachment in attachments:
-        await chat_bucket.delete(attachment["file_id"])
+        if attachment.get("object_name"):
+            await get_minio_storage().delete_object(
+                bucket=attachment.get("storage_bucket"),
+                object_name=attachment["object_name"],
+            )
+        elif attachment.get("file_id") is not None:
+            await chat_bucket.delete(attachment["file_id"])
     await database.chat_attachments.delete_many({"project_id": project_id, "owner_id": owner_id})
     artifacts = await database.artifacts.find(
-        {"project_id": project_id, "owner_id": owner_id}, {"file_id": 1}
+        {"project_id": project_id, "owner_id": owner_id},
+        {"file_id": 1, "storage_bucket": 1, "object_name": 1},
     ).to_list(None)
     artifact_bucket = AsyncGridFSBucket(database, bucket_name="agent_artifacts")
     for artifact in artifacts:
-        await artifact_bucket.delete(artifact["file_id"])
+        if artifact.get("object_name"):
+            await get_minio_storage().delete_object(
+                bucket=artifact.get("storage_bucket"),
+                object_name=artifact["object_name"],
+            )
+        elif artifact.get("file_id") is not None:
+            await artifact_bucket.delete(artifact["file_id"])
     await database.artifacts.delete_many({"project_id": project_id, "owner_id": owner_id})
 
     sessions = await database.agent_sessions.find(

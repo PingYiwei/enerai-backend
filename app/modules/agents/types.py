@@ -20,7 +20,7 @@ class ImageInput:
     id: str
     name: str
     media_type: str
-    data_base64: str | None = None
+    url: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

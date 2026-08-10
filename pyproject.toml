@@ -9,12 +9,14 @@ dependencies = [
   "fastapi>=0.116,<1",
   "httpx>=0.28,<1",
   "jsonschema>=4.25,<5",
+  "minio>=7.2,<8",
   "pwdlib[argon2]>=0.2,<1",
   "pydantic[email]>=2.11,<3",
   "pydantic-settings>=2.10,<3",
   "pyjwt>=2.10,<3",
   "pymongo>=4.17,<5",
   "python-multipart>=0.0.20,<1",
+  "rdflib>=7.1,<8",
   "uvicorn[standard]>=0.35,<1",
 ]
 

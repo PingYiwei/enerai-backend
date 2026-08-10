@@ -7,7 +7,7 @@ from app.modules.projects.data import (
     cleanup_project_resources,
     get_data_source,
     owned_project,
-    point_scheme_csv,
+    point_scheme_xlsx,
     project_point_scheme,
     project_rdf,
     properties,
@@ -143,9 +143,9 @@ async def export_points(
 ) -> Response:
     project = await owned_project(database, principal, project_id)
     scheme = await project_point_scheme(database, project)
-    filename = quote(f"{project['name']}-point-scheme.csv")
+    filename = quote(f"{project['name']}-point-scheme.xlsx")
     return Response(
-        point_scheme_csv(scheme),
-        media_type="text/csv; charset=utf-8",
+        point_scheme_xlsx(scheme),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{filename}"},
     )

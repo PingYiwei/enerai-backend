@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 import httpx
 
 from app.modules.agents.types import (
+    ImageInput,
     Message,
     ProviderEvent,
     ProviderRequest,
@@ -242,7 +243,7 @@ def _chat_messages(request: ProviderRequest) -> list[dict[str, Any]]:
             content.extend(
                 {
                     "type": "image_url",
-                    "image_url": {"url": f"data:{image.media_type};base64,{image.data_base64}"},
+                    "image_url": {"url": _required_image_url(image)},
                 }
                 for image in message.images
             )
@@ -280,7 +281,7 @@ def _responses_input(messages: tuple[Message, ...]) -> list[dict[str, Any]]:
                 image_content.extend(
                     {
                         "type": "input_image",
-                        "image_url": f"data:{image.media_type};base64,{image.data_base64}",
+                        "image_url": _required_image_url(image),
                     }
                     for image in message.images
                 )
@@ -298,6 +299,12 @@ def _responses_input(messages: tuple[Message, ...]) -> list[dict[str, Any]]:
             for call in message.tool_calls
         )
     return items
+
+
+def _required_image_url(image: ImageInput) -> str:
+    if image.url is None:
+        raise ValueError(f"Image {image.id} does not have a provider-accessible URL")
+    return image.url
 
 
 def _chat_usage(raw: dict[str, Any]) -> Usage:

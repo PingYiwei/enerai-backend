@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 from datetime import UTC, datetime
 from typing import Any
 
@@ -10,6 +9,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
 from app.core.ids import new_id
+from app.core.object_storage import get_minio_storage
 from app.core.security import Principal
 from app.modules.agents.context import contextual_content, validate_references
 from app.modules.agents.schemas import (
@@ -165,18 +165,32 @@ class MongoAgentRepository:
         ).to_list(None)
         run_ids = [document["_id"] for document in operations]
         artifacts = await self._database.artifacts.find(
-            {"session_id": session_id, "owner_id": principal.user_id}, {"file_id": 1}
+            {"session_id": session_id, "owner_id": principal.user_id},
+            {"file_id": 1, "storage_bucket": 1, "object_name": 1},
         ).to_list(None)
         attachments = await self._database.chat_attachments.find(
-            {"session_id": session_id, "owner_id": principal.user_id}, {"file_id": 1}
+            {"session_id": session_id, "owner_id": principal.user_id},
+            {"file_id": 1, "storage_bucket": 1, "object_name": 1},
         ).to_list(None)
 
         artifact_bucket = AsyncGridFSBucket(self._database, bucket_name="agent_artifacts")
         for artifact in artifacts:
-            await artifact_bucket.delete(artifact["file_id"])
+            if artifact.get("object_name"):
+                await get_minio_storage().delete_object(
+                    bucket=artifact.get("storage_bucket"),
+                    object_name=artifact["object_name"],
+                )
+            elif artifact.get("file_id") is not None:
+                await artifact_bucket.delete(artifact["file_id"])
         attachment_bucket = AsyncGridFSBucket(self._database, bucket_name="chat_files")
         for attachment in attachments:
-            await attachment_bucket.delete(attachment["file_id"])
+            if attachment.get("object_name"):
+                await get_minio_storage().delete_object(
+                    bucket=attachment.get("storage_bucket"),
+                    object_name=attachment["object_name"],
+                )
+            elif attachment.get("file_id") is not None:
+                await attachment_bucket.delete(attachment["file_id"])
 
         if run_ids:
             await self._database.agent_events.delete_many({"run_id": {"$in": run_ids}})
@@ -798,7 +812,6 @@ class MongoAgentRepository:
         ids = [attachment["id"] for attachment in attachments]
         documents = await self._database.chat_attachments.find({"_id": {"$in": ids}}).to_list(None)
         by_id = {document["_id"]: document for document in documents}
-        bucket = AsyncGridFSBucket(self._database, bucket_name="chat_files")
         images: list[ImageInput] = []
         for attachment in attachments:
             document = by_id.get(attachment["id"])
@@ -808,17 +821,67 @@ class MongoAgentRepository:
                     "A session image is no longer available",
                     status_code=500,
                 )
-            stream = await bucket.open_download_stream(document["file_id"])
-            content = await stream.read()
+            document = await self._ensure_minio_image(document)
+            url = await get_minio_storage().create_presigned_get_url(
+                bucket=document.get("storage_bucket"),
+                object_name=document["object_name"],
+            )
             images.append(
                 ImageInput(
                     id=document["_id"],
                     name=document["name"],
                     media_type=document["media_type"],
-                    data_base64=base64.b64encode(content).decode(),
+                    url=url,
                 )
             )
         return tuple(images)
+
+    async def _ensure_minio_image(self, document: Document) -> Document:
+        if document.get("object_name"):
+            return document
+
+        gridfs_bucket = AsyncGridFSBucket(self._database, bucket_name="chat_files")
+        stream = await gridfs_bucket.open_download_stream(document["file_id"])
+        content = await stream.read()
+        extension = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/gif": "gif",
+            "image/webp": "webp",
+        }[document["media_type"]]
+        object_name = (
+            f"chat-images/{document['project_id']}/{document['_id']}.{extension}"
+        )
+        storage = get_minio_storage()
+        stored = await storage.put_bytes(
+            object_name=object_name,
+            content=content,
+            content_type=document["media_type"],
+            metadata={
+                "attachment_id": document["_id"],
+                "owner_id": document["owner_id"],
+                "project_id": document["project_id"],
+            },
+        )
+        storage_fields = {
+            "storage_bucket": stored.bucket,
+            "object_name": stored.object_name,
+            "etag": stored.etag,
+            "version_id": stored.version_id,
+        }
+        try:
+            await self._database.chat_attachments.update_one(
+                {"_id": document["_id"]},
+                {"$set": storage_fields, "$unset": {"file_id": ""}},
+            )
+        except Exception:
+            await storage.delete_object(
+                bucket=stored.bucket,
+                object_name=stored.object_name,
+            )
+            raise
+        await gridfs_bucket.delete(document["file_id"])
+        return {**document, **storage_fields}
 
     async def _run_leaf(self, operation: Document) -> str | None:
         if operation.get("last_entry_id"):

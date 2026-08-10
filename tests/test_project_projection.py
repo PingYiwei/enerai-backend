@@ -1,8 +1,13 @@
+import io
+import zipfile
+from xml.etree import ElementTree
+
 from app.modules.projects.data import (
     _property_catalog_items,
     _property_query_params,
     point_scheme,
     point_scheme_csv,
+    point_scheme_xlsx,
     project_rdf,
 )
 
@@ -68,6 +73,31 @@ def test_point_scheme_generates_category_properties_and_sensors() -> None:
     assert b"section,point_name,device_name,property_name" in exported
     assert b"inherent" in exported
     assert b"sensor" in exported
+
+    workbook = point_scheme_xlsx(scheme)
+    assert workbook.startswith(b"PK")
+    with zipfile.ZipFile(io.BytesIO(workbook)) as archive:
+        worksheet = ElementTree.fromstring(archive.read("xl/worksheets/sheet1.xml"))
+        styles = ElementTree.fromstring(archive.read("xl/styles.xml"))
+
+    namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    columns = worksheet.findall("x:cols/x:col", namespace)
+    assert len(columns) == 8
+    assert all(float(column.attrib["width"]) >= 12 for column in columns)
+
+    cells = {
+        cell.attrib["r"]: cell
+        for cell in worksheet.findall("x:sheetData/x:row/x:c", namespace)
+    }
+    assert cells["A1"].attrib["s"] == "1"
+    assert cells["H2"].attrib == {"r": "H2", "s": "2", "t": "inlineStr"}
+    assert styles.find("x:fonts/x:font[2]/x:b", namespace) is not None
+    header_fill = styles.find("x:fills/x:fill[3]/x:patternFill/x:fgColor", namespace)
+    assert header_fill is not None
+    assert header_fill.attrib["rgb"] == "FF4472C4"
+    text_style = styles.find("x:cellXfs/x:xf[3]", namespace)
+    assert text_style is not None
+    assert text_style.attrib["numFmtId"] == "49"
 
 
 def test_rdf_projection_escapes_labels_and_preserves_connections() -> None:
