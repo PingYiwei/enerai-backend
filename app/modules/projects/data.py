@@ -344,15 +344,19 @@ def point_scheme_csv(scheme: PointScheme) -> bytes:
 def project_rdf(project: Document) -> str:
     project_name = str(project.get("name") or project.get("_id") or "project").strip()
     namespace_name = quote(re.sub(r"\s+", "_", project_name), safe="._-~") or "project"
-    lines = [
+    prefixes = [
         "@prefix brick: <https://brickschema.org/schema/Brick#> .",
+        f"@prefix enerai: <https://enerai.ai/projects/{namespace_name}#> .",
         "@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .",
         "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .",
-        f"@prefix enerai: <https://enerai.ai/projects/{namespace_name}#> .",
-        "",
-        "enerai:project rdf:type brick:Building .",
-        f'enerai:project rdfs:label "{_turtle(project_name)}" .',
     ]
+    statements: dict[str, list[tuple[str, str]]] = {}
+
+    def add(subject: str, predicate: str, value: str) -> None:
+        statements.setdefault(subject, []).append((predicate, value))
+
+    add("enerai:project", "a", "brick:Building")
+    add("enerai:project", "rdfs:label", f'"{_turtle(project_name)}"')
     node_by_id = {str(node.get("id")): node for node in project.get("nodes", [])}
     for node in project.get("nodes", []):
         data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
@@ -361,11 +365,11 @@ def project_rdf(project: Document) -> str:
             continue
         node_ref = f"enerai:{_uri_part(name)}"
         category = _brick_class(node, data)
-        lines.append(f"{node_ref} rdf:type brick:{category} .")
-        lines.append(f'{node_ref} rdfs:label "{_turtle(name)}" .')
+        add(node_ref, "a", f"brick:{category}")
+        add(node_ref, "rdfs:label", f'"{_turtle(name)}"')
         description = data.get("description") or data.get("note")
         if description:
-            lines.append(f'{node_ref} rdfs:comment "{_turtle(description)}" .')
+            add(node_ref, "rdfs:comment", f'"{_turtle(description)}"')
         for sensor in data.get("sensors", []):
             if not isinstance(sensor, dict):
                 continue
@@ -374,19 +378,15 @@ def project_rdf(project: Document) -> str:
                 continue
             sensor_ref = f"enerai:{_uri_part(sensor_name)}"
             sensor_class = _class_part(sensor.get("category") or "Sensor")
-            lines.extend(
-                [
-                    f"{sensor_ref} rdf:type brick:{sensor_class} .",
-                    f'{sensor_ref} rdfs:label "{_turtle(sensor_name)}" .',
-                    f"{node_ref} brick:hasPoint {sensor_ref} .",
-                    f"{sensor_ref} brick:isPointOf {node_ref} .",
-                ]
-            )
+            add(sensor_ref, "a", f"brick:{sensor_class}")
+            add(sensor_ref, "rdfs:label", f'"{_turtle(sensor_name)}"')
             if sensor.get("id"):
-                lines.append(f'{sensor_ref} enerai:sourceId "{_turtle(sensor["id"])}" .')
+                add(sensor_ref, "enerai:sourceId", f'"{_turtle(sensor["id"])}"')
             sensor_description = sensor.get("description") or sensor.get("note")
             if sensor_description:
-                lines.append(f'{sensor_ref} rdfs:comment "{_turtle(sensor_description)}" .')
+                add(sensor_ref, "rdfs:comment", f'"{_turtle(sensor_description)}"')
+            add(sensor_ref, "brick:isPointOf", node_ref)
+            add(node_ref, "brick:hasPoint", sensor_ref)
         child_ids = data.get("child") if isinstance(data.get("child"), list) else []
         for child_id in child_ids:
             child = node_by_id.get(str(child_id))
@@ -395,12 +395,8 @@ def project_rdf(project: Document) -> str:
             child_data = child.get("data", {}) if isinstance(child.get("data"), dict) else {}
             child_name = str(child_data.get("name") or child_data.get("label") or child_id)
             child_ref = f"enerai:{_uri_part(child_name)}"
-            lines.extend(
-                [
-                    f"{node_ref} brick:hasPart {child_ref} .",
-                    f"{child_ref} brick:isPartOf {node_ref} .",
-                ]
-            )
+            add(node_ref, "brick:hasPart", child_ref)
+            add(child_ref, "brick:isPartOf", node_ref)
     for edge in project.get("edges", []):
         source = node_by_id.get(str(edge.get("source")))
         target = node_by_id.get(str(edge.get("target")))
@@ -412,13 +408,28 @@ def project_rdf(project: Document) -> str:
         target_name = target_data.get("name") or target_data.get("label") or target.get("id")
         source_ref = f"enerai:{_uri_part(source_name)}"
         target_ref = f"enerai:{_uri_part(target_name)}"
-        lines.extend(
-            [
-                f"{source_ref} brick:feed {target_ref} .",
-                f"{target_ref} brick:isFedBy {source_ref} .",
-            ]
+        add(source_ref, "brick:feed", target_ref)
+        add(target_ref, "brick:isFedBy", source_ref)
+
+    blocks = [_turtle_subject(subject, predicates) for subject, predicates in statements.items()]
+    return "\n".join(prefixes) + "\n\n" + "\n\n".join(blocks) + "\n"
+
+
+def _turtle_subject(subject: str, predicates: list[tuple[str, str]]) -> str:
+    priority = {"a": 0, "rdfs:label": 1, "rdfs:comment": 2}
+    ordered = [
+        item
+        for _, item in sorted(
+            enumerate(predicates),
+            key=lambda entry: (priority.get(entry[1][0], 3), entry[0]),
         )
-    return "\n".join(lines) + "\n"
+    ]
+    lines: list[str] = []
+    for index, (predicate, value) in enumerate(ordered):
+        prefix = f"{subject} " if index == 0 else "    "
+        terminator = " ." if index == len(ordered) - 1 else " ;"
+        lines.append(f"{prefix}{predicate} {value}{terminator}")
+    return "\n".join(lines)
 
 
 def _brief_name(value: str) -> str:
