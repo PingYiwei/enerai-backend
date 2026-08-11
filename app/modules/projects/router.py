@@ -1,6 +1,6 @@
 from urllib.parse import quote
 
-from fastapi import APIRouter, Response, status
+from fastapi import APIRouter, Query, Response, status
 
 from app.api.dependencies import CurrentPrincipal, Database, Projects
 from app.modules.projects.data import (
@@ -25,6 +25,7 @@ from app.modules.projects.schemas import (
     ProjectCreate,
     ProjectDetail,
     ProjectList,
+    ProjectTokenUsage,
     ProjectUpdate,
     PropertyCatalog,
 )
@@ -33,6 +34,7 @@ from app.modules.projects.service import (
     delete_project,
     get_project,
     list_projects,
+    project_token_usage,
     update_project,
 )
 
@@ -60,6 +62,25 @@ async def get_one(
     principal: CurrentPrincipal,
 ) -> ProjectDetail:
     return await get_project(projects, principal, project_id)
+
+
+@router.get("/{project_id}/token-usage", response_model=ProjectTokenUsage)
+async def token_usage(
+    project_id: str,
+    projects: Projects,
+    database: Database,
+    principal: CurrentPrincipal,
+    days: int = Query(default=14, ge=1, le=90),
+    timezone_offset_minutes: int = Query(default=0, ge=-840, le=840),
+) -> ProjectTokenUsage:
+    return await project_token_usage(
+        projects,
+        database,
+        principal,
+        project_id,
+        days=days,
+        timezone_offset_minutes=timezone_offset_minutes,
+    )
 
 
 @router.patch("/{project_id}", response_model=ProjectDetail)

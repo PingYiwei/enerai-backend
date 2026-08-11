@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 import httpx
+from openai import AsyncOpenAI
 
 from app.modules.agents.providers.openai_compatible import (
     OpenAICompatibleConfig,
@@ -77,9 +78,18 @@ async def test_chat_completions_stream_is_normalized() -> None:
                 "data: [DONE]",
             ]
         )
-        return httpx.Response(200, content=stream.encode())
+        return httpx.Response(
+            200,
+            content=(stream + "\n\n").encode(),
+            headers={"content-type": "text/event-stream"},
+        )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = AsyncOpenAI(
+        api_key="secret",
+        base_url="https://example.test/v1",
+        http_client=http_client,
+    )
     provider = OpenAICompatibleProvider(
         OpenAICompatibleConfig(
             id="openrouter",
@@ -112,7 +122,7 @@ async def test_chat_completions_stream_is_normalized() -> None:
             )
         )
     ]
-    await client.aclose()
+    await client.close()
 
     assert captured["path"] == "/v1/chat/completions"
     assert captured["body"]["messages"][0] == {"role": "system", "content": "System"}
@@ -143,19 +153,68 @@ async def test_responses_stream_is_normalized() -> None:
                 _data({"type": "response.output_text.delta", "delta": "Done"}),
                 _data(
                     {
+                        "type": "response.output_item.added",
+                        "sequence_number": 1,
+                        "output_index": 0,
+                        "item": {
+                            "id": "item_1",
+                            "type": "function_call",
+                            "call_id": "call_2",
+                            "name": "lookup",
+                            "arguments": "",
+                        },
+                    }
+                ),
+                _data(
+                    {
+                        "type": "response.function_call_arguments.delta",
+                        "sequence_number": 2,
+                        "output_index": 0,
+                        "item_id": "item_1",
+                        "delta": '{"id":1}',
+                    }
+                ),
+                _data(
+                    {
                         "type": "response.completed",
+                        "sequence_number": 3,
                         "response": {
                             "id": "resp_2",
+                            "created_at": 1,
+                            "model": "model",
+                            "object": "response",
+                            "output": [],
+                            "parallel_tool_calls": True,
                             "status": "completed",
-                            "usage": {"input_tokens": 8, "output_tokens": 2},
+                            "tool_choice": "auto",
+                            "tools": [],
+                            "usage": {
+                                "input_tokens": 8,
+                                "input_tokens_details": {
+                                    "cached_tokens": 0,
+                                    "cache_write_tokens": 0,
+                                },
+                                "output_tokens": 2,
+                                "output_tokens_details": {"reasoning_tokens": 0},
+                                "total_tokens": 10,
+                            },
                         },
                     }
                 ),
             ]
         )
-        return httpx.Response(200, content=stream.encode())
+        return httpx.Response(
+            200,
+            content=(stream + "\n\n").encode(),
+            headers={"content-type": "text/event-stream"},
+        )
 
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = AsyncOpenAI(
+        api_key="secret",
+        base_url="https://api.openai.test/v1",
+        http_client=http_client,
+    )
     provider = OpenAICompatibleProvider(
         OpenAICompatibleConfig(
             id="openai",
@@ -188,7 +247,7 @@ async def test_responses_stream_is_normalized() -> None:
             )
         )
     ]
-    await client.aclose()
+    await client.close()
 
     assert captured["path"] == "/v1/responses"
     assert captured["body"]["instructions"] == "System"
@@ -197,5 +256,7 @@ async def test_responses_stream_is_normalized() -> None:
         "image_url": "https://minio.enerai.cloud/enerai/image?signature=test",
     }
     assert events[0] == TextDelta("Done")
-    assert isinstance(events[1], UsageUpdated)
+    assert events[1] == ToolCallStarted(index=0, id="call_2", name="lookup")
+    assert events[2] == ToolCallArgumentsDelta(index=0, delta='{"id":1}')
+    assert isinstance(events[3], UsageUpdated)
     assert events[-1] == ResponseCompleted("stop", "resp_2")
