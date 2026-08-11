@@ -11,7 +11,8 @@ from app.core.errors import AppError
 from app.core.ids import new_id
 from app.core.object_storage import get_minio_storage
 from app.core.security import Principal
-from app.modules.agents.context import contextual_content, validate_references
+from app.modules.agents.runtime.context import contextual_content, validate_references
+from app.modules.agents.runtime.types import ImageInput, JsonObject, Message, ToolCall, Usage
 from app.modules.agents.schemas import (
     RunAccepted,
     RunCreate,
@@ -23,7 +24,6 @@ from app.modules.agents.schemas import (
     SessionSummary,
     SessionUpdate,
 )
-from app.modules.agents.types import ImageInput, JsonObject, Message, ToolCall, Usage
 
 Document = dict[str, Any]
 

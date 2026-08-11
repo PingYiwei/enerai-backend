@@ -4,9 +4,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from app.modules.agents.provider import Provider
-from app.modules.agents.tools import Tool, ToolContext, execute_tool_batch
-from app.modules.agents.types import (
+from app.modules.agents.providers.base import Provider
+from app.modules.agents.runtime.types import (
     AgentResult,
     JsonObject,
     Message,
@@ -20,6 +19,7 @@ from app.modules.agents.types import (
     Usage,
     UsageUpdated,
 )
+from app.modules.agents.tools.base import Tool, ToolContext, execute_tool_batch
 
 type AgentEventSink = Callable[[str, JsonObject], Awaitable[None]]
 type AgentCheckpointSink = Callable[[tuple[Message, ...], int], Awaitable[None]]

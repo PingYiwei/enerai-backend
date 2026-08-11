@@ -13,9 +13,9 @@ from app.core.errors import AppError
 from app.core.ids import new_id
 from app.core.object_storage import get_minio_storage
 from app.core.security import Principal
+from app.modules.agents.runtime.types import JsonObject, ToolResult
 from app.modules.agents.schemas import ArtifactList, ArtifactSummary
-from app.modules.agents.tools import Tool, ToolContext
-from app.modules.agents.types import JsonObject, ToolResult
+from app.modules.agents.tools.base import Tool, ToolContext
 
 Document = dict[str, Any]
 MAX_ARTIFACT_BYTES = 5 * 1024 * 1024

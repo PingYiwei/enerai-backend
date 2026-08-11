@@ -10,14 +10,7 @@ from fastapi import APIRouter, File, Header, Query, Request, Response, UploadFil
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import CurrentPrincipal, Database
-from app.modules.agents.artifacts import list_artifacts, read_artifact
-from app.modules.agents.attachments import (
-    create_attachment,
-    delete_draft_attachment,
-    read_attachment,
-)
-from app.modules.agents.context import context_options
-from app.modules.agents.repository import MongoAgentRepository
+from app.modules.agents.runtime.context import context_options
 from app.modules.agents.schemas import (
     ArtifactList,
     AttachmentSummary,
@@ -32,6 +25,13 @@ from app.modules.agents.schemas import (
     SessionUpdate,
 )
 from app.modules.agents.service import AgentRunCoordinator
+from app.modules.agents.storage.artifacts import list_artifacts, read_artifact
+from app.modules.agents.storage.attachments import (
+    create_attachment,
+    delete_draft_attachment,
+    read_attachment,
+)
+from app.modules.agents.storage.repository import MongoAgentRepository
 
 router = APIRouter()
 TERMINAL_RUN_STATES = {"completed", "failed", "cancelled"}

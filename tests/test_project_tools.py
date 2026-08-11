@@ -6,9 +6,9 @@ from typing import Any
 import pytest
 
 from app.core.errors import AppError
-from app.modules.agents.project_tools import project_tools
-from app.modules.agents.studio_tools import studio_tools
-from app.modules.agents.tools import ToolContext
+from app.modules.agents.tools.base import ToolContext
+from app.modules.agents.tools.project import project_tools
+from app.modules.agents.tools.studio import studio_tools
 
 
 class FakeProjects:

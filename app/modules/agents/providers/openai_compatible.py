@@ -7,7 +7,7 @@ from typing import Any, Literal, cast
 
 import httpx
 
-from app.modules.agents.types import (
+from app.modules.agents.runtime.types import (
     ImageInput,
     Message,
     ProviderEvent,

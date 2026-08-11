@@ -2,8 +2,13 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from app.modules.agents.titles import generate_session_title, normalize_session_title
-from app.modules.agents.types import ProviderEvent, ProviderRequest, ResponseCompleted, TextDelta
+from app.modules.agents.runtime.titles import generate_session_title, normalize_session_title
+from app.modules.agents.runtime.types import (
+    ProviderEvent,
+    ProviderRequest,
+    ResponseCompleted,
+    TextDelta,
+)
 
 
 class TitleProvider:

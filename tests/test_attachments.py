@@ -6,8 +6,8 @@ from fastapi import UploadFile
 
 from app.core.object_storage import StoredObject
 from app.core.security import Principal
-from app.modules.agents import attachments
-from app.modules.agents.attachments import create_attachment, detect_image_type
+from app.modules.agents.storage import attachments
+from app.modules.agents.storage.attachments import create_attachment, detect_image_type
 
 
 class FakeCollection:

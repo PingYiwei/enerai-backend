@@ -8,8 +8,8 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
 from app.core.security import Principal
-from app.modules.agents.tools import Tool, ToolContext
-from app.modules.agents.types import JsonObject, ToolResult
+from app.modules.agents.runtime.types import JsonObject, ToolResult
+from app.modules.agents.tools.base import Tool, ToolContext
 from app.modules.studio.schemas import (
     GraphEdge,
     GraphNode,
@@ -97,15 +97,41 @@ def _add_group_child(nodes: list[GraphNode], parent_id: str | None, child_id: st
         parent.data = {**parent.data, "child": [*child_ids, child_id]}
 
 
+def _graph_patch(
+    before_nodes: list[GraphNode],
+    before_edges: list[GraphEdge],
+    after_nodes: list[GraphNode],
+    after_edges: list[GraphEdge],
+) -> JsonObject:
+    before_node_map = {node.id: node.model_dump(mode="json") for node in before_nodes}
+    before_edge_map = {edge.id: edge.model_dump(mode="json") for edge in before_edges}
+    after_node_map = {node.id: node.model_dump(mode="json") for node in after_nodes}
+    after_edge_map = {edge.id: edge.model_dump(mode="json") for edge in after_edges}
+    return {
+        "upsert_nodes": [
+            node for node_id, node in after_node_map.items() if before_node_map.get(node_id) != node
+        ],
+        "remove_node_ids": [
+            node_id for node_id in before_node_map if node_id not in after_node_map
+        ],
+        "upsert_edges": [
+            edge for edge_id, edge in after_edge_map.items() if before_edge_map.get(edge_id) != edge
+        ],
+        "remove_edge_ids": [
+            edge_id for edge_id in before_edge_map if edge_id not in after_edge_map
+        ],
+    }
+
+
 def studio_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
     async def read_graph(_: JsonObject, context: ToolContext) -> ToolResult:
         graph = await get_graph(database, _principal(context), context.project_id)
         return ToolResult(tool_call_id="", content=graph.model_dump_json())
 
-    async def mutate_graph(
-        context: ToolContext, action: str, mutation: Mutation
-    ) -> ToolResult:
+    async def mutate_graph(context: ToolContext, action: str, mutation: Mutation) -> ToolResult:
         current = await get_graph(database, _principal(context), context.project_id)
+        before_nodes = [node.model_copy(deep=True) for node in current.nodes]
+        before_edges = [edge.model_copy(deep=True) for edge in current.edges]
         nodes = [node.model_copy(deep=True) for node in current.nodes]
         edges = [edge.model_copy(deep=True) for edge in current.edges]
         details = mutation(nodes, edges)
@@ -122,6 +148,15 @@ def studio_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
                 ensure_ascii=False,
                 separators=(",", ":"),
             ),
+            details={
+                "revision": saved.revision,
+                "graph_patch": _graph_patch(
+                    before_nodes,
+                    before_edges,
+                    saved.nodes,
+                    saved.edges,
+                ),
+            },
         )
 
     async def create_node(arguments: JsonObject, context: ToolContext) -> ToolResult:
@@ -170,12 +205,8 @@ def studio_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
                         **node.data,
                         "child": [child for child in children if child != node_id],
                     }
-            removed_edges = [
-                edge.id for edge in edges if node_id in {edge.source, edge.target}
-            ]
-            edges[:] = [
-                edge for edge in edges if node_id not in {edge.source, edge.target}
-            ]
+            removed_edges = [edge.id for edge in edges if node_id in {edge.source, edge.target}]
+            edges[:] = [edge for edge in edges if node_id not in {edge.source, edge.target}]
             return {"node_id": node_id, "removed_edge_ids": removed_edges}
 
         return await mutate_graph(context, "node_deleted", mutation)

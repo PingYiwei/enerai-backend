@@ -6,17 +6,18 @@ from contextlib import suppress
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import Principal
-from app.modules.agents.artifacts import artifact_tools
-from app.modules.agents.engine import AgentEngine, AgentRunRequest
-from app.modules.agents.project_tools import project_tools
+from app.modules.agents.prompts import render_agent_system_prompt
 from app.modules.agents.providers.openai_compatible import OpenAICompatibleProvider
 from app.modules.agents.providers.registry import ProviderId, ProviderRegistry
-from app.modules.agents.repository import MongoAgentRepository
+from app.modules.agents.runtime.engine import AgentEngine, AgentRunRequest
+from app.modules.agents.runtime.titles import generate_session_title
+from app.modules.agents.runtime.types import JsonObject, Message
 from app.modules.agents.schemas import RunAccepted, RunCreate
-from app.modules.agents.studio_tools import studio_tools
-from app.modules.agents.titles import generate_session_title
-from app.modules.agents.tools import Tool
-from app.modules.agents.types import JsonObject, Message
+from app.modules.agents.storage.artifacts import artifact_tools
+from app.modules.agents.storage.repository import MongoAgentRepository
+from app.modules.agents.tools.base import Tool
+from app.modules.agents.tools.project import project_tools
+from app.modules.agents.tools.studio import studio_tools
 from app.modules.auth.model_settings import configured_auxiliary_model, resolve_provider_runtime
 
 
@@ -242,7 +243,10 @@ class AgentRunCoordinator:
                     project_id=operation["project_id"],
                     user_id=operation["owner_id"],
                     model=model,
-                    system_prompt=self._system_prompt(str(operation.get("surface", "insight"))),
+                    system_prompt=render_agent_system_prompt(
+                        str(operation.get("surface", "insight")),
+                        timezone_name=self._settings.agent_timezone,
+                    ),
                     messages=tuple(messages),
                     tools=self._tools(repository, str(operation.get("surface", "insight"))),
                     context_char_budget=self._settings.agent_context_char_budget,
@@ -264,19 +268,3 @@ class AgentRunCoordinator:
     def _tools(self, repository: MongoAgentRepository, surface: str) -> tuple[Tool, ...]:
         shared = project_tools(repository.database) + artifact_tools(repository.database)
         return shared + studio_tools(repository.database) if surface == "studio" else shared
-
-    @staticmethod
-    def _system_prompt(surface: str) -> str:
-        if surface == "studio":
-            return (
-                "You are EnerAI Studio Agent. Inspect the current graph before editing it, then "
-                "use "
-                "the atomic node, sensor, and edge tools for each requested change. Preserve node "
-                "positions unless the user asks for layout changes. Explain modeling decisions "
-                "briefly and never invent live data."
-            )
-        return (
-            "You are EnerAI Insight, an energy-system analysis agent. Be precise, distinguish "
-            "evidence from inference, and use project tools when data is required. Use project "
-            "RDF and read-only SPARQL queries for semantic equipment relationships."
-        )

@@ -5,9 +5,9 @@ from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
 from app.core.object_storage import StoredObject
-from app.modules.agents import artifacts
-from app.modules.agents.artifacts import artifact_tools, create_artifact, safe_file_name
-from app.modules.agents.tools import ToolContext
+from app.modules.agents.storage import artifacts
+from app.modules.agents.storage.artifacts import artifact_tools, create_artifact, safe_file_name
+from app.modules.agents.tools.base import ToolContext
 
 
 class FakeArtifactCollection:

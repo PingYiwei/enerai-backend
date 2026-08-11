@@ -9,7 +9,7 @@ from app.modules.agents.providers.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleProvider,
 )
-from app.modules.agents.types import (
+from app.modules.agents.runtime.types import (
     ImageInput,
     Message,
     ProviderRequest,

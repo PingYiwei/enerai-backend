@@ -1,4 +1,4 @@
-from app.modules.agents.context import contextual_content
+from app.modules.agents.runtime.context import contextual_content
 from app.modules.agents.schemas import ContextReference
 
 

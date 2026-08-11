@@ -11,8 +11,8 @@ from rdflib.query import ResultRow
 
 from app.core.errors import AppError
 from app.core.security import Principal
-from app.modules.agents.tools import Tool, ToolContext
-from app.modules.agents.types import JsonObject, ToolResult
+from app.modules.agents.runtime.types import JsonObject, ToolResult
+from app.modules.agents.tools.base import Tool, ToolContext
 from app.modules.projects.data import owned_project, project_rdf, properties, query_data
 from app.modules.projects.schemas import DataQuery
 

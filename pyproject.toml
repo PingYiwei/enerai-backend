@@ -17,6 +17,7 @@ dependencies = [
   "pymongo>=4.17,<5",
   "python-multipart>=0.0.20,<1",
   "rdflib>=7.1,<8",
+  "tzdata>=2025.2,<2027",
   "uvicorn[standard]>=0.35,<1",
 ]
 

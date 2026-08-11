@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-import app.modules.agents.studio_tools as studio_tools_module
-from app.modules.agents.studio_tools import studio_tools
-from app.modules.agents.tools import ToolContext
+import app.modules.agents.tools.studio as studio_tools_module
+from app.modules.agents.tools.base import ToolContext
+from app.modules.agents.tools.studio import studio_tools
 from app.modules.studio.schemas import StudioGraph, StudioGraphUpdate
 from app.modules.studio.service import validate_graph
 
@@ -96,6 +96,13 @@ async def test_studio_tools_expose_atomic_node_sensor_and_edge_operations(
         CONTEXT,
     )
     assert json.loads(created_sensor.content)["revision"] == 4
+    assert created_sensor.details["revision"] == 4
+    assert created_sensor.details["graph_patch"] == {
+        "upsert_nodes": [state["graph"].nodes[1].model_dump(mode="json")],
+        "remove_node_ids": [],
+        "upsert_edges": [],
+        "remove_edge_ids": [],
+    }
 
     updated_sensor = await tools["update_studio_sensor"].execute(
         {
@@ -109,9 +116,7 @@ async def test_studio_tools_expose_atomic_node_sensor_and_edge_operations(
         "Pump discharge pressure"
     )
 
-    await tools["update_studio_node"].execute(
-        {"node_id": "pump-1", "parent_id": None}, CONTEXT
-    )
+    await tools["update_studio_node"].execute({"node_id": "pump-1", "parent_id": None}, CONTEXT)
     assert state["graph"].nodes[0].data["child"] == []
 
     await tools["create_studio_node"].execute(
@@ -132,9 +137,7 @@ async def test_studio_tools_expose_atomic_node_sensor_and_edge_operations(
         },
         CONTEXT,
     )
-    deleted = await tools["delete_studio_node"].execute(
-        {"node_id": "group-1"}, CONTEXT
-    )
+    deleted = await tools["delete_studio_node"].execute({"node_id": "group-1"}, CONTEXT)
 
     assert json.loads(deleted.content)["revision"] == 9
     assert state["graph"].nodes[0].id == "pump-1"
@@ -195,3 +198,9 @@ async def test_deleting_node_also_deletes_connected_edges(
 
     result = await tools["delete_studio_node"].execute({"node_id": "source"}, CONTEXT)
     assert json.loads(result.content)["removed_edge_ids"] == ["edge-1"]
+    assert result.details["graph_patch"] == {
+        "upsert_nodes": [],
+        "remove_node_ids": ["source"],
+        "upsert_edges": [],
+        "remove_edge_ids": ["edge-1"],
+    }

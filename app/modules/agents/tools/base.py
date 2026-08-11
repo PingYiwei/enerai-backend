@@ -9,7 +9,7 @@ from typing import Literal
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError, ValidationError
 
-from app.modules.agents.types import JsonObject, ProviderTool, ToolCall, ToolResult
+from app.modules.agents.runtime.types import JsonObject, ProviderTool, ToolCall, ToolResult
 
 type ToolEffect = Literal["read", "write", "external", "compute"]
 type ExecutionMode = Literal["parallel", "sequential"]

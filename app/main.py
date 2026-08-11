@@ -10,10 +10,10 @@ from app.api.router import api_router
 from app.core.config import Settings, get_settings
 from app.core.database import database_lifespan
 from app.core.errors import install_error_handlers
-from app.modules.agents.attachments import cleanup_expired_drafts
 from app.modules.agents.providers.registry import ProviderRegistry
-from app.modules.agents.repository import MongoAgentRepository
 from app.modules.agents.service import AgentRunCoordinator
+from app.modules.agents.storage.attachments import cleanup_expired_drafts
+from app.modules.agents.storage.repository import MongoAgentRepository
 from app.modules.inspections.scheduler import InspectionScheduler
 
 

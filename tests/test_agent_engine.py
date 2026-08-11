@@ -5,9 +5,8 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from app.modules.agents.engine import AgentEngine, AgentRunRequest, select_provider_context
-from app.modules.agents.tools import Tool, ToolContext, execute_tool_batch
-from app.modules.agents.types import (
+from app.modules.agents.runtime.engine import AgentEngine, AgentRunRequest, select_provider_context
+from app.modules.agents.runtime.types import (
     JsonObject,
     Message,
     ProviderEvent,
@@ -21,6 +20,7 @@ from app.modules.agents.types import (
     Usage,
     UsageUpdated,
 )
+from app.modules.agents.tools.base import Tool, ToolContext, execute_tool_batch
 
 
 class ScriptedProvider:

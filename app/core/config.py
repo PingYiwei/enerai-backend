@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     access_token_minutes: int = 8 * 60
     agent_context_char_budget: int = Field(default=300_000, ge=10_000)
+    agent_timezone: str = "Asia/Shanghai"
     cors_origins: list[str] = ["http://localhost:5173"]
 
     minio_endpoint: str = Field(
