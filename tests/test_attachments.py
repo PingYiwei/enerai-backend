@@ -65,6 +65,11 @@ async def test_attachment_is_written_to_minio(monkeypatch: pytest.MonkeyPatch) -
     assert storage.upload is not None
     assert storage.upload["object_name"].startswith("chat-images/prj_test/att_")
     assert storage.upload["content_type"] == "image/png"
+    assert storage.upload["metadata"] == {
+        "attachment-id": summary.id,
+        "owner-id": "usr_test",
+        "project-id": "prj_test",
+    }
     assert database.chat_attachments.inserted is not None
     assert database.chat_attachments.inserted["storage_bucket"] == "enerai"
     assert "file_id" not in database.chat_attachments.inserted

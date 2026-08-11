@@ -858,9 +858,9 @@ class MongoAgentRepository:
             content=content,
             content_type=document["media_type"],
             metadata={
-                "attachment_id": document["_id"],
-                "owner_id": document["owner_id"],
-                "project_id": document["project_id"],
+                "attachment-id": document["_id"],
+                "owner-id": document["owner_id"],
+                "project-id": document["project_id"],
             },
         )
         storage_fields = {

@@ -93,11 +93,11 @@ async def create_artifact(
         content=payload,
         content_type=media_type,
         metadata={
-            "artifact_id": artifact_id,
-            "owner_id": context.user_id,
-            "project_id": context.project_id,
-            "session_id": context.session_id,
-            "run_id": context.run_id,
+            "artifact-id": artifact_id,
+            "owner-id": context.user_id,
+            "project-id": context.project_id,
+            "session-id": context.session_id,
+            "run-id": context.run_id,
         },
     )
     document: Document = {
