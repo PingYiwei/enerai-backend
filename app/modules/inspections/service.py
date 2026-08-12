@@ -11,14 +11,27 @@ from app.core.errors import AppError
 from app.core.ids import new_id
 from app.core.security import Principal
 from app.modules.inspections.schemas import (
+    CheckId,
     InspectionFinding,
     InspectionPolicy,
     InspectionPolicyUpdate,
     InspectionRun,
     InspectionRunList,
+    default_checks,
 )
 
 Document = dict[str, Any]
+
+
+def _inspection_run(document: Document) -> InspectionRun:
+    payload = {**document, "id": str(document.get("id") or document.get("_id") or "")}
+    return InspectionRun.model_validate(payload)
+
+
+def _policy_checks(document: Document | None) -> list[CheckId]:
+    if document is None:
+        return default_checks()
+    return InspectionPolicyUpdate.model_validate(document).checks
 
 
 async def _owned_project(
@@ -61,61 +74,100 @@ async def save_policy(
     return InspectionPolicy.model_validate(document)
 
 
-def inspect_graph(project: Document) -> list[InspectionFinding]:
-    nodes = project.get("nodes", [])
-    edges = project.get("edges", [])
+def inspect_graph(
+    project: Document, checks: list[CheckId] | None = None
+) -> list[InspectionFinding]:
+    selected_checks = set(checks or default_checks())
+    nodes = [node for node in project.get("nodes", []) if isinstance(node, dict)]
+    edges = [edge for edge in project.get("edges", []) if isinstance(edge, dict)]
     findings: list[InspectionFinding] = []
-    if not nodes:
-        return [
+
+    if "graph_integrity" in selected_checks and not nodes:
+        findings.append(
             InspectionFinding(
                 code="graph_empty",
                 severity="warning",
                 title="Studio graph is empty",
                 detail="Add equipment and connections before operational inspection.",
             )
-        ]
+        )
 
-    node_ids = {str(node["id"]) for node in nodes}
-    connected = {
-        str(endpoint)
-        for edge in edges
-        for endpoint in (edge.get("source"), edge.get("target"))
-        if endpoint is not None
-    }
-    isolated = sorted(node_ids - connected)
-    if isolated:
+    if "graph_integrity" in selected_checks and nodes:
+        node_ids = {
+            str(node["id"])
+            for node in nodes
+            if node.get("id") is not None and node.get("type") != "group"
+        }
+        connected = {
+            str(endpoint)
+            for edge in edges
+            for endpoint in (edge.get("source"), edge.get("target"))
+            if endpoint is not None
+        }
+        isolated = sorted(node_ids - connected)
+        if isolated:
+            findings.append(
+                InspectionFinding(
+                    code="isolated_equipment",
+                    severity="warning",
+                    title="Equipment is disconnected",
+                    detail=f"{len(isolated)} graph nodes have no connection.",
+                    node_ids=isolated,
+                )
+            )
+
+    if "sensor_coverage" in selected_checks:
+        incomplete_sensor_nodes: set[str] = set()
+        for node in nodes:
+            node_id = str(node.get("id") or "")
+            raw_data = node.get("data")
+            data: Document = raw_data if isinstance(raw_data, dict) else {}
+            if node.get("type") == "sensor" and not data.get("property"):
+                incomplete_sensor_nodes.add(node_id)
+            embedded_sensors = data.get("sensors", [])
+            if not isinstance(embedded_sensors, list):
+                incomplete_sensor_nodes.add(node_id)
+                continue
+            if any(
+                not isinstance(sensor, dict)
+                or not str(sensor.get("name") or "").strip()
+                or not str(sensor.get("category") or "").strip()
+                for sensor in embedded_sensors
+            ):
+                incomplete_sensor_nodes.add(node_id)
+        incomplete_sensor_nodes.discard("")
+        if incomplete_sensor_nodes:
+            incomplete_node_ids = sorted(incomplete_sensor_nodes)
+            findings.append(
+                InspectionFinding(
+                    code="sensor_property_missing",
+                    severity="critical",
+                    title="Sensor definition is incomplete",
+                    detail=(
+                        f"{len(incomplete_node_ids)} graph nodes contain sensors "
+                        "without a name or category."
+                    ),
+                    node_ids=incomplete_node_ids,
+                )
+            )
+
+    if "data_freshness" in selected_checks:
         findings.append(
             InspectionFinding(
-                code="isolated_equipment",
+                code="data_freshness_unavailable",
                 severity="warning",
-                title="Equipment is disconnected",
-                detail=f"{len(isolated)} graph nodes have no connection.",
-                node_ids=isolated,
+                title="Data freshness check is unavailable",
+                detail="Operational data freshness is not connected to the inspection runtime yet.",
             )
         )
-    sensors = [node for node in nodes if node.get("type") == "sensor"]
-    unmapped = sorted(
-        str(node["id"])
-        for node in sensors
-        if not isinstance(node.get("data"), dict) or not node["data"].get("property")
-    )
-    if unmapped:
-        findings.append(
-            InspectionFinding(
-                code="sensor_property_missing",
-                severity="critical",
-                title="Sensor property is not mapped",
-                detail=f"{len(unmapped)} sensors cannot resolve an operational property.",
-                node_ids=unmapped,
-            )
-        )
+
     if not findings:
         findings.append(
             InspectionFinding(
                 code="graph_integrity_ok",
                 severity="info",
-                title="Graph integrity checks passed",
-                detail="All current structural checks completed without findings.",
+                title="Configured inspection checks passed",
+                detail="All configured structural checks completed without findings.",
             )
         )
     return findings
@@ -128,6 +180,10 @@ async def create_run(
     trigger: Literal["manual", "schedule"] = "manual",
 ) -> InspectionRun:
     project = await _owned_project(database, principal, project_id)
+    policy = await database.inspection_policies.find_one(
+        {"project_id": project_id, "owner_id": principal.user_id}
+    )
+    checks = _policy_checks(policy)
     now = datetime.now(UTC)
     document = {
         "_id": new_id("isr"),
@@ -135,13 +191,14 @@ async def create_run(
         "owner_id": principal.user_id,
         "status": "completed",
         "trigger": trigger,
+        "checks": checks,
         "graph_revision": int(project.get("graph_revision", 0)),
-        "findings": [item.model_dump(mode="json") for item in inspect_graph(project)],
+        "findings": [item.model_dump(mode="json") for item in inspect_graph(project, checks)],
         "started_at": now,
         "completed_at": now,
     }
     await database.inspection_runs.insert_one(document)
-    return InspectionRun.model_validate(document)
+    return _inspection_run(document)
 
 
 async def run_due_policies(database: AsyncDatabase[Document]) -> int:
@@ -149,6 +206,7 @@ async def run_due_policies(database: AsyncDatabase[Document]) -> int:
     policies = await database.inspection_policies.find({"enabled": True}).to_list(None)
     created = 0
     for policy in policies:
+        checks = _policy_checks(policy)
         interval_seconds = int(policy["interval_minutes"]) * 60
         slot = int(now.timestamp()) // interval_seconds
         project = await database.projects.find_one(
@@ -162,9 +220,10 @@ async def run_due_policies(database: AsyncDatabase[Document]) -> int:
             "owner_id": policy["owner_id"],
             "status": "completed",
             "trigger": "schedule",
+            "checks": checks,
             "schedule_slot": slot,
             "graph_revision": int(project.get("graph_revision", 0)),
-            "findings": [item.model_dump(mode="json") for item in inspect_graph(project)],
+            "findings": [item.model_dump(mode="json") for item in inspect_graph(project, checks)],
             "started_at": now,
             "completed_at": now,
         }
@@ -186,6 +245,6 @@ async def list_runs(
         .to_list(None)
     )
     return InspectionRunList(
-        items=[InspectionRun.model_validate(document) for document in documents],
+        items=[_inspection_run(document) for document in documents],
         total=len(documents),
     )

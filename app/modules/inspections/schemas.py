@@ -36,6 +36,7 @@ class InspectionRun(BaseModel):
     project_id: str
     status: Literal["completed", "failed"]
     trigger: Literal["manual", "schedule"]
+    checks: list[CheckId] = Field(default_factory=default_checks)
     graph_revision: int
     findings: list[InspectionFinding]
     started_at: datetime
