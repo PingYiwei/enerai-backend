@@ -182,6 +182,31 @@ async def list_runs(
     )
 
 
+async def delete_run(
+    database: AsyncDatabase[Document],
+    principal: Principal,
+    run_id: str,
+    project_id: str,
+) -> None:
+    query: Document = {
+        "_id": run_id,
+        "project_id": project_id,
+        "owner_id": principal.user_id,
+    }
+    if await database.inspection_runs.find_one(query) is None:
+        raise AppError("inspection_run_not_found", "Inspection run was not found", status_code=404)
+
+    related_query = {
+        "run_id": run_id,
+        "project_id": project_id,
+        "owner_id": principal.user_id,
+    }
+    await database.inspection_events.delete_many(related_query)
+    await database.inspection_screenings.delete_many(related_query)
+    await database.inspection_node_results.delete_many(related_query)
+    await database.inspection_runs.delete_one(query)
+
+
 async def get_policy(
     database: AsyncDatabase[Document], principal: Principal, project_id: str
 ) -> InspectionPolicy:

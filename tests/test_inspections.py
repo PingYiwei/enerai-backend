@@ -14,6 +14,7 @@ from app.modules.inspections.schemas import InspectionRunCreate
 from app.modules.inspections.service import (
     _inspection_run,
     create_run,
+    delete_run,
     get_run,
     inspect_graph,
     list_runs,
@@ -49,6 +50,16 @@ class FakeCollection:
     async def insert_one(self, document: dict[str, Any]) -> None:
         self.documents.append(document)
 
+    async def delete_one(self, query: dict[str, Any]) -> None:
+        self.documents = [
+            document
+            for document in self.documents
+            if not all(document.get(key) == value for key, value in query.items())
+        ]
+
+    async def delete_many(self, query: dict[str, Any]) -> None:
+        await self.delete_one(query)
+
     def find(self, query: dict[str, Any]) -> FakeCursor:
         return FakeCursor(
             [
@@ -81,6 +92,9 @@ class FakeDatabase:
         )
         self.inspection_policies = FakeCollection()
         self.inspection_runs = FakeCollection()
+        self.inspection_events: FakeCollection | None = None
+        self.inspection_screenings: FakeCollection | None = None
+        self.inspection_node_results: FakeCollection | None = None
 
 
 def test_empty_graph_returns_actionable_finding() -> None:
@@ -176,6 +190,31 @@ async def test_create_and_list_runs_return_public_ids() -> None:
     assert created.id.startswith("isr_")
     assert listed.total == 1
     assert listed.items[0].id == created.id
+
+
+async def test_delete_run_removes_owned_run_and_related_documents() -> None:
+    database = FakeDatabase()
+    typed_database = cast(AsyncDatabase[dict[str, Any]], database)
+    principal = Principal(user_id="usr_test", username="tester")
+    created = await create_run(typed_database, principal, "prj_test")
+    database.inspection_events = FakeCollection()
+    database.inspection_screenings = FakeCollection()
+    database.inspection_node_results = FakeCollection()
+    related = {
+        "run_id": created.id,
+        "project_id": "prj_test",
+        "owner_id": "usr_test",
+    }
+    database.inspection_events.documents.append({"_id": "event", **related})
+    database.inspection_screenings.documents.append({"_id": "screening", **related})
+    database.inspection_node_results.documents.append({"_id": "result", **related})
+
+    await delete_run(typed_database, principal, created.id, "prj_test")
+
+    assert database.inspection_runs.documents == []
+    assert database.inspection_events.documents == []
+    assert database.inspection_screenings.documents == []
+    assert database.inspection_node_results.documents == []
 
 
 async def test_critical_plan_uses_grade_threshold_rdf_edges_and_data_premises(

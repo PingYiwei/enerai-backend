@@ -27,6 +27,7 @@ from app.modules.inspections.schemas import (
 from app.modules.inspections.service import (
     create_run,
     create_schedule,
+    delete_run,
     delete_schedule,
     get_policy,
     get_run,
@@ -160,6 +161,20 @@ async def run(
     project_id: str, run_id: str, database: Database, principal: CurrentPrincipal
 ) -> InspectionRun:
     return await get_run(database, principal, run_id, project_id)
+
+
+@router.delete("/runs/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_run(
+    project_id: str,
+    run_id: str,
+    request: Request,
+    database: Database,
+    principal: CurrentPrincipal,
+) -> Response:
+    await get_run(database, principal, run_id, project_id)
+    await coordinator(request).cancel(principal, run_id)
+    await delete_run(database, principal, run_id, project_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/runs/{run_id}/report", response_model=InspectionReport)

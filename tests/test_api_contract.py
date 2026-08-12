@@ -30,3 +30,4 @@ def test_frontend_critical_routes_are_present_in_openapi() -> None:
         assert method in paths[path]
     assert "patch" in paths["/api/v1/sessions/{session_id}"]
     assert "delete" in paths["/api/v1/sessions/{session_id}"]
+    assert "delete" in paths["/api/v1/projects/{project_id}/inspections/runs/{run_id}"]
