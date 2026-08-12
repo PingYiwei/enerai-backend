@@ -118,21 +118,91 @@ async def test_data_source(
 ) -> DataSourceTestResult:
     project = await owned_project(database, principal, project_id)
     source = _configured_source(project)
+    requirements = await _node_property_requirements(database, project)
+    endpoint = _endpoint(source, "properties_path")
     started = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             response = await client.get(
-                _endpoint(source, "properties_path"),
+                endpoint,
                 headers=_headers(source),
                 params=_property_query_params(project),
             )
     except httpx.HTTPError as error:
         raise AppError("data_source_unreachable", str(error), status_code=502) from error
     elapsed_ms = round((time.perf_counter() - started) * 1_000)
+    payload: Any = None
+    response_error = ""
+    if response.is_success:
+        try:
+            payload = response.json()
+        except ValueError:
+            response_error = "Property endpoint did not return valid JSON"
+    else:
+        response_error = f"Property endpoint returned HTTP {response.status_code}"
+
+    items_value = _property_catalog_items(payload) if payload is not None else []
+    items = items_value if isinstance(items_value, list) else []
+    catalog_items = [item for item in items if isinstance(item, dict)]
+    provided_by_device = _device_property_map(payload)
+    nodes: list[Document] = []
+    for requirement in requirements:
+        required = set(requirement["required_properties"])
+        provided = provided_by_device.get(requirement["device_id"])
+        if response_error:
+            status, status_text, message = "failed", "Test failed", response_error
+            provided_names: list[str] = []
+            missing = sorted(required)
+        elif provided is None:
+            status, status_text = "failed", "Device unavailable"
+            message = "The property response did not include this node"
+            provided_names = []
+            missing = sorted(required)
+        else:
+            provided_names = sorted(provided)
+            missing = sorted(required - provided)
+            if not required:
+                status, status_text = "failed", "Model incomplete"
+                message = "No required properties are configured for this node category"
+            elif not missing:
+                status, status_text = "complete", "Data complete"
+                message = "All properties required by the current point scheme are available"
+            elif required & provided:
+                status, status_text = "partial", "Partially connected"
+                message = "Only some properties required by the current point scheme are available"
+            else:
+                status, status_text = "failed", "No required data"
+                message = "None of the required properties are available"
+        nodes.append(
+            {
+                **requirement,
+                "provided_properties": provided_names,
+                "missing_properties": missing,
+                "status": status,
+                "status_text": status_text,
+                "message": message,
+            }
+        )
+
+    healthy_count = sum(node["status"] in {"complete", "partial"} for node in nodes)
+    if nodes and all(node["status"] == "complete" for node in nodes):
+        overall_status, overall_status_text = "complete", "Data connection complete"
+    elif healthy_count:
+        overall_status, overall_status_text = "partial", "Data connection partially complete"
+    else:
+        overall_status, overall_status_text = "failed", "Data connection failed"
     return DataSourceTestResult(
-        ok=response.is_success,
+        ok=response.is_success and not response_error,
         status_code=response.status_code,
         elapsed_ms=elapsed_ms,
+        project_id=project_id,
+        endpoint=endpoint,
+        overall_status=overall_status,
+        overall_status_text=overall_status_text,
+        node_count=len(nodes),
+        completed_node_count=healthy_count,
+        nodes=nodes,
+        items=catalog_items,
     )
 
 
@@ -193,6 +263,90 @@ def _property_catalog_items(payload: Any) -> Any:
                 items.append(item)
         return items
     return payload.get("items", payload)
+
+
+def _device_property_map(payload: Any) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        devices = data.get("devices") if isinstance(data, dict) else None
+        if not isinstance(devices, list):
+            devices = payload.get("devices")
+        if isinstance(devices, list):
+            for device in devices:
+                if not isinstance(device, dict):
+                    continue
+                device_id = str(device.get("device_id") or "").strip()
+                if device_id:
+                    result[device_id] = _property_names(device.get("properties"))
+            return result
+
+    items = _property_catalog_items(payload)
+    if isinstance(items, list):
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            device_id = str(item.get("device_id") or "").strip()
+            property_name = str(item.get("name") or item.get("property_id") or "").strip()
+            if device_id and property_name:
+                result.setdefault(device_id, set()).add(property_name)
+    return result
+
+
+def _property_names(value: Any) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    names: set[str] = set()
+    for item in value:
+        name = item.get("name") or item.get("property_id") if isinstance(item, dict) else item
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return names
+
+
+async def _node_property_requirements(
+    database: AsyncDatabase[Document], project: Document
+) -> list[Document]:
+    root_categories = {
+        str(data["root_category"])
+        for node in project.get("nodes", [])
+        if node.get("type") != "group"
+        and isinstance((data := node.get("data")), dict)
+        and data.get("root_category")
+    }
+    documents = (
+        await database.properties.find({"root_category": {"$in": list(root_categories)}}).to_list(
+            None
+        )
+        if root_categories
+        else []
+    )
+    properties_by_category = {
+        str(document.get("root_category")): sorted(_property_names(document.get("properties")))
+        for document in documents
+    }
+    requirements: list[Document] = []
+    for node in project.get("nodes", []):
+        if node.get("type") == "group":
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            continue
+        node_id = str(node.get("id") or "").strip()
+        node_name = str(data.get("name") or data.get("label") or node_id).strip()
+        if not node_id or not node_name:
+            continue
+        requirements.append(
+            {
+                "node_id": node_id,
+                "node_name": node_name,
+                "device_id": node_name,
+                "required_properties": properties_by_category.get(
+                    str(data.get("root_category") or ""), []
+                ),
+            }
+        )
+    return requirements
 
 
 async def query_data(

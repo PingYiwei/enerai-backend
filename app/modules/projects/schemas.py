@@ -50,10 +50,30 @@ class DataSourceView(BaseModel):
     updated_at: datetime
 
 
+class DataSourceTestNode(BaseModel):
+    node_id: str
+    node_name: str
+    device_id: str
+    required_properties: list[str]
+    provided_properties: list[str]
+    missing_properties: list[str]
+    status: str
+    status_text: str
+    message: str
+
+
 class DataSourceTestResult(BaseModel):
     ok: bool
     status_code: int
     elapsed_ms: int
+    project_id: str
+    endpoint: str
+    overall_status: str
+    overall_status_text: str
+    node_count: int
+    completed_node_count: int
+    nodes: list[DataSourceTestNode]
+    items: list[dict[str, Any]]
 
 
 class PropertyCatalog(BaseModel):

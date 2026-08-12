@@ -3,6 +3,7 @@ import zipfile
 from xml.etree import ElementTree
 
 from app.modules.projects.data import (
+    _device_property_map,
     _property_catalog_items,
     _property_query_params,
     point_scheme,
@@ -140,3 +141,14 @@ def test_property_catalog_uses_node_names_and_flattens_device_response() -> None
         {"name": "temperature", "data_type": "number", "unit": "°C", "device_id": "CH-1"},
         {"name": "status", "device_id": "CH-1"},
     ]
+
+    assert _device_property_map(
+        {
+            "data": {
+                "devices": [
+                    {"device_id": "CH-1", "properties": items},
+                    {"device_id": "Pump 1", "properties": []},
+                ]
+            }
+        }
+    ) == {"CH-1": {"temperature", "status"}, "Pump 1": set()}
