@@ -50,13 +50,37 @@ def _validate_query_form(query: str) -> None:
         )
 
 
+async def _context_project(
+    database: AsyncDatabase[Document], context: ToolContext
+) -> Document:
+    return await owned_project(
+        database,
+        Principal(user_id=context.user_id, username=""),
+        context.project_id,
+    )
+
+
+def _node_device(project: Document, node_id: str) -> tuple[str, str]:
+    for node in project.get("nodes", []):
+        if str(node.get("id") or "") != node_id:
+            continue
+        data = node.get("data")
+        if not isinstance(data, dict):
+            break
+        device_id = str(data.get("name") or data.get("label") or "").strip()
+        if device_id:
+            return str(data.get("name") or data.get("label") or node_id), device_id
+        break
+    raise AppError(
+        "project_node_not_found",
+        "Node was not found or does not have a data-source device name",
+        status_code=404,
+    )
+
+
 def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
     async def get_rdf(_: JsonObject, context: ToolContext) -> ToolResult:
-        project = await owned_project(
-            database,
-            Principal(user_id=context.user_id, username=""),
-            context.project_id,
-        )
+        project = await _context_project(database, context)
         return ToolResult(
             tool_call_id="",
             content=project_rdf(project),
@@ -67,11 +91,7 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
         sparql = str(arguments["query"]).strip()
         _validate_query_form(sparql)
         limit = int(arguments.get("limit", 200))
-        project = await owned_project(
-            database,
-            Principal(user_id=context.user_id, username=""),
-            context.project_id,
-        )
+        project = await _context_project(database, context)
         graph = Graph()
         graph.parse(data=project_rdf(project), format="turtle")
         try:
@@ -112,23 +132,43 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
             content=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
         )
 
-    async def get_properties(_: JsonObject, context: ToolContext) -> ToolResult:
+    async def get_device_properties(arguments: JsonObject, context: ToolContext) -> ToolResult:
+        node_id = str(arguments["node_id"]).strip()
+        project = await _context_project(database, context)
+        node_name, device_id = _node_device(project, node_id)
         catalog = await properties(
             database,
             Principal(user_id=context.user_id, username=""),
             context.project_id,
+            device_ids=[device_id],
         )
         return ToolResult(
             tool_call_id="",
-            content=catalog.model_dump_json(),
+            content=json.dumps(
+                {
+                    "node_id": node_id,
+                    "node_name": node_name,
+                    "device_id": device_id,
+                    "properties": catalog.items,
+                    "total": catalog.total,
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
         )
 
-    async def query_timeseries(arguments: JsonObject, context: ToolContext) -> ToolResult:
+    async def query_device_data(arguments: JsonObject, context: ToolContext) -> ToolResult:
+        node_id = str(arguments["node_id"]).strip()
+        project = await _context_project(database, context)
+        _, device_id = _node_device(project, node_id)
+        property_values = arguments.get("properties")
         request = DataQuery(
-            property_ids=[str(item) for item in arguments["property_ids"]],
-            start=datetime.fromisoformat(str(arguments["start"])),
-            end=datetime.fromisoformat(str(arguments["end"])),
-            limit=int(arguments.get("limit", 10_000)),
+            device_id=device_id,
+            properties=[str(item) for item in property_values]
+            if isinstance(property_values, list)
+            else None,
+            start_time=datetime.fromisoformat(str(arguments["start_time"])),
+            end_time=datetime.fromisoformat(str(arguments["end_time"])),
         )
         result = await query_data(
             database,
@@ -172,35 +212,43 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
             result_visibility="both",
         ),
         Tool(
-            name="get_project_properties",
-            description="List operational property identifiers exposed by the project data source.",
-            input_schema={"type": "object", "additionalProperties": False},
-            execute=get_properties,
+            name="get_project_device_properties",
+            description=(
+                "List properties available from the operational data source for one Reality Model "
+                "node. Use this before querying the node's time-series data."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {"node_id": {"type": "string", "minLength": 1, "maxLength": 500}},
+                "required": ["node_id"],
+                "additionalProperties": False,
+            },
+            execute=get_device_properties,
             effect="external",
             result_visibility="model",
         ),
         Tool(
-            name="query_project_data",
+            name="query_project_device_data",
             description=(
-                "Query project time-series data for property IDs and an ISO-8601 time range."
+                "Query time-series data for one Reality Model node and a bounded ISO-8601 "
+                "time range. Call get_project_device_properties first to choose properties."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "property_ids": {
+                    "node_id": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "properties": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "minItems": 1,
                         "maxItems": 200,
                     },
-                    "start": {"type": "string", "format": "date-time"},
-                    "end": {"type": "string", "format": "date-time"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100_000},
+                    "start_time": {"type": "string", "format": "date-time"},
+                    "end_time": {"type": "string", "format": "date-time"},
                 },
-                "required": ["property_ids", "start", "end"],
+                "required": ["node_id", "start_time", "end_time"],
                 "additionalProperties": False,
             },
-            execute=query_timeseries,
+            execute=query_device_data,
             effect="external",
             result_visibility="model",
         ),

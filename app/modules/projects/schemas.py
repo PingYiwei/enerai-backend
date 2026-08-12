@@ -103,10 +103,10 @@ class PropertyCatalog(BaseModel):
 
 
 class DataQuery(BaseModel):
-    property_ids: list[str] = Field(min_length=1, max_length=200)
-    start: datetime
-    end: datetime
-    limit: int = Field(default=10_000, ge=1, le=100_000)
+    device_id: str = Field(min_length=1, max_length=500)
+    start_time: datetime
+    end_time: datetime
+    properties: list[str] | None = Field(default=None, max_length=200)
 
 
 class DataQueryResult(BaseModel):

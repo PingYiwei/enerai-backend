@@ -207,7 +207,10 @@ async def test_data_source(
 
 
 async def properties(
-    database: AsyncDatabase[Document], principal: Principal, project_id: str
+    database: AsyncDatabase[Document],
+    principal: Principal,
+    project_id: str,
+    device_ids: list[str] | None = None,
 ) -> PropertyCatalog:
     project = await owned_project(database, principal, project_id)
     source = _configured_source(project)
@@ -215,7 +218,7 @@ async def properties(
         "GET",
         _endpoint(source, "properties_path"),
         _headers(source),
-        params=_property_query_params(project),
+        params=_property_query_params(project, device_ids),
     )
     items = _property_catalog_items(payload)
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
@@ -227,16 +230,30 @@ async def properties(
     return PropertyCatalog(items=items, total=len(items))
 
 
-def _property_query_params(project: Document) -> dict[str, str]:
+def _property_query_params(
+    project: Document, device_ids: list[str] | None = None
+) -> dict[str, str]:
+    node_names: list[str] = []
+    candidates = device_ids if device_ids is not None else _project_device_ids(project)
+    for device_id in candidates:
+        name = str(device_id).strip()
+        if name and name not in node_names:
+            node_names.append(name)
+    return {"device_ids": ",".join(node_names)} if node_names else {}
+
+
+def _project_device_ids(project: Document) -> list[str]:
     node_names: list[str] = []
     for node in project.get("nodes", []):
+        if node.get("type") == "group":
+            continue
         data = node.get("data")
         if not isinstance(data, dict):
             continue
         name = str(data.get("name") or data.get("label") or "").strip()
         if name and name not in node_names:
             node_names.append(name)
-    return {"device_ids": ",".join(node_names)} if node_names else {}
+    return node_names
 
 
 def _property_catalog_items(payload: Any) -> Any:
@@ -355,8 +372,14 @@ async def query_data(
     project_id: str,
     request: DataQuery,
 ) -> DataQueryResult:
-    if request.end <= request.start:
-        raise AppError("invalid_time_range", "end must be after start", status_code=422)
+    if request.start_time.tzinfo is None or request.end_time.tzinfo is None:
+        raise AppError(
+            "invalid_time_range",
+            "start_time and end_time must include a timezone",
+            status_code=422,
+        )
+    if request.end_time <= request.start_time:
+        raise AppError("invalid_time_range", "end_time must be after start_time", status_code=422)
     project = await owned_project(database, principal, project_id)
     source = _configured_source(project)
     payload = await _request_json(
@@ -364,10 +387,10 @@ async def query_data(
         _endpoint(source, "query_path"),
         _headers(source),
         json={
-            "property_ids": request.property_ids,
-            "start": request.start.isoformat(),
-            "end": request.end.isoformat(),
-            "limit": request.limit,
+            "device_id": request.device_id,
+            "start_time": request.start_time.isoformat(),
+            "end_time": request.end_time.isoformat(),
+            **({"properties": request.properties} if request.properties else {}),
         },
     )
     return DataQueryResult(data=payload)

@@ -1,7 +1,12 @@
 import io
 import zipfile
+from datetime import UTC, datetime
 from xml.etree import ElementTree
 
+import pytest
+
+import app.modules.projects.data as project_data
+from app.core.security import Principal
 from app.modules.projects.data import (
     _device_property_map,
     _property_catalog_items,
@@ -10,7 +15,9 @@ from app.modules.projects.data import (
     point_scheme_csv,
     point_scheme_xlsx,
     project_rdf,
+    query_data,
 )
+from app.modules.projects.schemas import DataQuery
 
 
 def project() -> dict[str, object]:
@@ -119,6 +126,7 @@ def test_rdf_projection_escapes_labels_and_preserves_connections() -> None:
 def test_property_catalog_uses_node_names_and_flattens_device_response() -> None:
     params = _property_query_params(project())
     assert params == {"device_ids": "CH-1,Pump 1"}
+    assert _property_query_params(project(), ["CH-1"]) == {"device_ids": "CH-1"}
 
     items = _property_catalog_items(
         {
@@ -152,3 +160,59 @@ def test_property_catalog_uses_node_names_and_flattens_device_response() -> None
             }
         }
     ) == {"CH-1": {"temperature", "status"}, "Pump 1": set()}
+
+
+@pytest.mark.asyncio
+async def test_query_data_serializes_the_remote_device_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Projects:
+        async def find_one(self, query: dict[str, str]) -> dict[str, object] | None:
+            if query == {"_id": "prj_1", "owner_id": "usr_1"}:
+                return {
+                    "_id": "prj_1",
+                    "owner_id": "usr_1",
+                    "data_source": {
+                        "base_url": "https://data.example.com/api",
+                        "properties_path": "/properties",
+                        "query_path": "/query",
+                    },
+                }
+            return None
+
+    class Database:
+        projects = Projects()
+
+    async def fake_request_json(
+        method: str, url: str, headers: dict[str, str], **kwargs: object
+    ) -> object:
+        captured.update({"method": method, "url": url, "headers": headers, **kwargs})
+        return {"code": 200, "data": {"device_id": "CH-1", "points": []}}
+
+    monkeypatch.setattr(project_data, "_request_json", fake_request_json)
+    result = await query_data(
+        Database(),  # type: ignore[arg-type]
+        Principal(user_id="usr_1", username=""),
+        "prj_1",
+        DataQuery(
+            device_id="CH-1",
+            properties=["temperature"],
+            start_time=datetime(2026, 8, 12, tzinfo=UTC),
+            end_time=datetime(2026, 8, 12, 1, tzinfo=UTC),
+        ),
+    )
+
+    assert captured == {
+        "method": "POST",
+        "url": "https://data.example.com/api/query",
+        "headers": {},
+        "json": {
+            "device_id": "CH-1",
+            "start_time": "2026-08-12T00:00:00+00:00",
+            "end_time": "2026-08-12T01:00:00+00:00",
+            "properties": ["temperature"],
+        },
+    }
+    assert result.data == {"code": 200, "data": {"device_id": "CH-1", "points": []}}
