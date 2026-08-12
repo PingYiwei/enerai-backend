@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Header, Query, Request, Response, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 
 from app.api.dependencies import CurrentPrincipal, Database
@@ -42,6 +43,14 @@ TERMINAL_STATES = {"completed", "partial", "failed", "cancelled"}
 
 def coordinator(request: Request) -> InspectionCoordinator:
     return cast(InspectionCoordinator, request.app.state.inspection_coordinator)
+
+
+def event_data_json(data: object) -> str:
+    return json.dumps(
+        jsonable_encoder(data),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 @router.get("/templates", response_model=InspectionTemplateList)
@@ -207,7 +216,7 @@ async def stream_events(
             )
             for row in rows:
                 cursor = int(row["seq"])
-                data = json.dumps(row["data"], ensure_ascii=False, separators=(",", ":"))
+                data = event_data_json(row["data"])
                 yield f"id: {cursor}\nevent: {row['type']}\ndata: {data}\n\n"
             if document.get("status") in TERMINAL_STATES and not rows:
                 return

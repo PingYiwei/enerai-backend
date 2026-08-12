@@ -9,6 +9,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.core.errors import AppError
 from app.core.security import Principal
 from app.modules.inspections import planning
+from app.modules.inspections.router import event_data_json
 from app.modules.inspections.schemas import InspectionRunCreate
 from app.modules.inspections.service import (
     _inspection_run,
@@ -154,6 +155,14 @@ def test_inspection_run_maps_mongo_id_and_supports_historical_documents() -> Non
 
     assert run.id == "isr_test"
     assert run.checks == ["graph_integrity", "sensor_coverage"]
+
+
+def test_inspection_event_json_serializes_agent_review_datetimes() -> None:
+    reviewed_at = datetime(2026, 8, 12, 9, 30, tzinfo=UTC)
+
+    payload = event_data_json({"result": {"reviewed_at": reviewed_at}})
+
+    assert payload == '{"result":{"reviewed_at":"2026-08-12T09:30:00+00:00"}}'
 
 
 async def test_create_and_list_runs_return_public_ids() -> None:

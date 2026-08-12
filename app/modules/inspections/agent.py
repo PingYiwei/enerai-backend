@@ -291,10 +291,7 @@ class InspectionCoordinator:
                     upsert=True,
                 )
                 await append_event(self._database, run_id, "node_scan_completed", screening)
-                await self._database.inspection_runs.update_one(
-                    {"_id": run_id},
-                    {"$set": {"progress": 0.35 * index / len(planning.devices)}},
-                )
+                await self._update_progress(run_id, 0.35 * index / len(planning.devices))
             await self._set_stage(run_id, "stage:screening", "succeeded")
             await self._set_stage(run_id, "stage:review", "running")
             total_usage = Usage()
@@ -307,10 +304,7 @@ class InspectionCoordinator:
                 total_usage += usage
                 completed = min(start + len(batch), len(planning.devices))
                 await self._update_usage(run_id, total_usage)
-                await self._database.inspection_runs.update_one(
-                    {"_id": run_id},
-                    {"$set": {"progress": 0.35 + 0.5 * completed / len(planning.devices)}},
-                )
+                await self._update_progress(run_id, 0.35 + 0.5 * completed / len(planning.devices))
             results = await (
                 self._database.inspection_node_results.find({"run_id": run_id})
                 .sort("node_label", 1)
@@ -733,6 +727,18 @@ class InspectionCoordinator:
             {"_id": run_id}, {"$set": {"usage": payload}}
         )
         await append_event(self._database, run_id, "usage_update", payload)
+
+    async def _update_progress(self, run_id: str, progress: float) -> None:
+        bounded = max(0.0, min(1.0, progress))
+        await self._database.inspection_runs.update_one(
+            {"_id": run_id}, {"$set": {"progress": bounded}}
+        )
+        await append_event(
+            self._database,
+            run_id,
+            "progress_update",
+            {"progress": bounded},
+        )
 
     async def _set_stage(self, run_id: str, task_id: str, status: str) -> None:
         await self._set_task(run_id, task_id, status, 1 if status == "succeeded" else 0)
