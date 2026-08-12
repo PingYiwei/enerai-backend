@@ -669,6 +669,17 @@ def project_rdf(project: Document) -> str:
         category = _brick_class(node, data)
         add(node_ref, "a", f"brick:{category}")
         add(node_ref, "rdfs:label", f'"{_turtle(name)}"')
+        raw_inspection = data.get("inspection")
+        inspection: Document = raw_inspection if isinstance(raw_inspection, dict) else {}
+        grade = str(inspection.get("grade") or data.get("inspection_grade") or "B").upper()
+        if grade not in {"S", "A", "B", "C"}:
+            grade = "B"
+        add(node_ref, "enerai:inspectionGrade", f'"{grade}"')
+        add(
+            node_ref,
+            "enerai:inspectionEnabled",
+            '"false"' if inspection.get("enabled") is False else '"true"',
+        )
         description = data.get("description") or data.get("note")
         if description:
             add(node_ref, "rdfs:comment", f'"{_turtle(description)}"')
@@ -835,7 +846,11 @@ async def cleanup_project_resources(
     for collection in (
         database.studio_graph_versions,
         database.inspection_policies,
+        database.inspection_schedules,
         database.inspection_runs,
+        database.inspection_events,
+        database.inspection_screenings,
+        database.inspection_node_results,
         database.models,
         database.datasets,
     ):

@@ -19,6 +19,10 @@ def test_frontend_critical_routes_are_present_in_openapi() -> None:
         "/api/v1/sessions/{session_id}/artifacts": "get",
         "/api/v1/artifacts/{artifact_id}/content": "get",
         "/api/v1/projects/{project_id}/inspections/runs": "post",
+        "/api/v1/projects/{project_id}/inspections/templates": "get",
+        "/api/v1/projects/{project_id}/inspections/schedules": "post",
+        "/api/v1/projects/{project_id}/inspections/runs/{run_id}/start": "post",
+        "/api/v1/projects/{project_id}/inspections/runs/{run_id}/events": "get",
         "/api/v1/projects/{project_id}/optimizer/datasets": "post",
         "/api/v1/projects/{project_id}/optimizer/models": "post",
     }

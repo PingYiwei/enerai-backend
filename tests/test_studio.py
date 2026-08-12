@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from app.core.errors import AppError
 from app.modules.studio.schemas import GraphEdge, GraphNode, StudioGraphUpdate
@@ -107,3 +108,17 @@ def test_graph_rejects_source_to_source_handle_connections() -> None:
         )
 
     assert error.value.code == "invalid_edge_handle"
+
+
+def test_equipment_inspection_grade_defaults_to_b_and_is_validated() -> None:
+    equipment = node("pump")
+
+    assert equipment.data["inspection"] == {"grade": "B", "enabled": True}
+
+    with pytest.raises(ValidationError):
+        GraphNode(
+            id="invalid",
+            type="equipment",
+            position={"x": 0, "y": 0},
+            data={"inspection": {"grade": "D"}},
+        )

@@ -39,6 +39,19 @@ SENSOR_SCHEMA: JsonObject = {
     "required": ["id", "name", "category"],
     "additionalProperties": False,
 }
+INSPECTION_SCHEMA: JsonObject = {
+    "type": "object",
+    "properties": {
+        "grade": {"type": "string", "enum": ["S", "A", "B", "C"]},
+        "enabled": {"type": "boolean"},
+    },
+    "additionalProperties": False,
+}
+NODE_DATA_SCHEMA: JsonObject = {
+    "type": "object",
+    "properties": {"inspection": INSPECTION_SCHEMA},
+    "additionalProperties": True,
+}
 
 
 def _principal(context: ToolContext) -> Principal:
@@ -181,7 +194,15 @@ def studio_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
                 if field in arguments:
                     payload[field] = arguments[field]
             if "data" in arguments:
-                payload["data"] = {**node.data, **dict(arguments["data"])}
+                data_patch = dict(arguments["data"])
+                inspection_patch = data_patch.get("inspection")
+                if isinstance(inspection_patch, dict):
+                    current_inspection = node.data.get("inspection")
+                    data_patch["inspection"] = {
+                        **(current_inspection if isinstance(current_inspection, dict) else {}),
+                        **inspection_patch,
+                    }
+                payload["data"] = {**node.data, **data_patch}
             updated = GraphNode.model_validate(payload)
             nodes[nodes.index(node)] = updated
             if updated.parent_id != previous_parent_id:
@@ -322,14 +343,17 @@ def studio_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
         ),
         Tool(
             name="create_studio_node",
-            description="Create one equipment or group node in the Studio graph.",
+            description=(
+                "Create one equipment or group node in the Studio graph. Equipment inspection "
+                "settings are data.inspection with grade S/A/B/C (default B) and enabled."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "id": node_id_property,
                     "type": {"type": "string", "minLength": 1, "maxLength": 80},
                     "position": POSITION_SCHEMA,
-                    "data": {"type": "object"},
+                    "data": NODE_DATA_SCHEMA,
                     "parent_id": {"type": ["string", "null"]},
                 },
                 "required": ["id", "position"],
@@ -340,14 +364,18 @@ def studio_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
         ),
         Tool(
             name="update_studio_node",
-            description="Update selected fields of one Studio node; data fields are merged.",
+            description=(
+                "Update selected fields of one Studio node; data fields are merged. Set an "
+                "equipment grade with data.inspection.grade (S/A/B/C); omitted inspection "
+                "fields are preserved."
+            ),
             input_schema={
                 "type": "object",
                 "properties": {
                     "node_id": node_id_property,
                     "type": {"type": "string", "minLength": 1, "maxLength": 80},
                     "position": POSITION_SCHEMA,
-                    "data": {"type": "object"},
+                    "data": NODE_DATA_SCHEMA,
                     "parent_id": {"type": ["string", "null"]},
                 },
                 "required": ["node_id"],

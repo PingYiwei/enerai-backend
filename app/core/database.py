@@ -116,6 +116,28 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
             ),
         ]
     )
+    await database.inspection_schedules.create_indexes(
+        [
+            IndexModel(
+                [("owner_id", ASCENDING), ("project_id", ASCENDING), ("created_at", DESCENDING)]
+            ),
+            IndexModel([("enabled", ASCENDING), ("next_run_at", ASCENDING)]),
+        ]
+    )
+    await database.inspection_events.create_indexes(
+        [IndexModel([("run_id", ASCENDING), ("seq", ASCENDING)], unique=True)]
+    )
+    await database.inspection_screenings.create_indexes(
+        [IndexModel([("run_id", ASCENDING), ("node_id", ASCENDING)], unique=True)]
+    )
+    await database.inspection_node_results.create_indexes(
+        [
+            IndexModel([("run_id", ASCENDING), ("node_id", ASCENDING)], unique=True),
+            IndexModel(
+                [("owner_id", ASCENDING), ("project_id", ASCENDING), ("status", ASCENDING)]
+            ),
+        ]
+    )
     await database.datasets.create_indexes(
         [
             IndexModel(

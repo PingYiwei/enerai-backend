@@ -35,7 +35,11 @@ async def test_studio_tools_expose_atomic_node_sensor_and_edge_operations(
                     "id": "pump-1",
                     "type": "pump",
                     "position": {"x": 40, "y": 40},
-                    "data": {"label": "P-1", "sensors": []},
+                    "data": {
+                        "label": "P-1",
+                        "sensors": [],
+                        "inspection": {"grade": "B", "enabled": False},
+                    },
                     "parent_id": "group-1",
                 },
             ],
@@ -119,6 +123,14 @@ async def test_studio_tools_expose_atomic_node_sensor_and_edge_operations(
     await tools["update_studio_node"].execute({"node_id": "pump-1", "parent_id": None}, CONTEXT)
     assert state["graph"].nodes[0].data["child"] == []
 
+    grade_result = await tools["update_studio_node"].execute(
+        {"node_id": "pump-1", "data": {"inspection": {"grade": "S"}}}, CONTEXT
+    )
+    assert json.loads(grade_result.content)["node"]["data"]["inspection"] == {
+        "grade": "S",
+        "enabled": False,
+    }
+
     await tools["create_studio_node"].execute(
         {
             "id": "chiller-1",
@@ -139,7 +151,7 @@ async def test_studio_tools_expose_atomic_node_sensor_and_edge_operations(
     )
     deleted = await tools["delete_studio_node"].execute({"node_id": "group-1"}, CONTEXT)
 
-    assert json.loads(deleted.content)["revision"] == 9
+    assert json.loads(deleted.content)["revision"] == 10
     assert state["graph"].nodes[0].id == "pump-1"
     assert state["graph"].nodes[0].parent_id is None
     assert [edge.id for edge in state["graph"].edges] == ["edge-1"]

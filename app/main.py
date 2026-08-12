@@ -14,6 +14,7 @@ from app.modules.agents.providers.registry import ProviderRegistry
 from app.modules.agents.service import AgentRunCoordinator
 from app.modules.agents.storage.attachments import cleanup_expired_drafts
 from app.modules.agents.storage.repository import MongoAgentRepository
+from app.modules.inspections.agent import InspectionCoordinator
 from app.modules.inspections.scheduler import InspectionScheduler
 
 
@@ -25,16 +26,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         providers = ProviderRegistry()
         coordinator = AgentRunCoordinator(resolved, providers)
         async with database_lifespan(resolved) as database:
-            inspection_scheduler = InspectionScheduler(database)
+            inspection_coordinator = InspectionCoordinator(database, resolved, providers)
+            inspection_scheduler = InspectionScheduler(database, inspection_coordinator)
             app.state.database = database
             app.state.agent_coordinator = coordinator
+            app.state.inspection_coordinator = inspection_coordinator
             await cleanup_expired_drafts(database)
             await coordinator.recover(MongoAgentRepository(database))
+            await inspection_coordinator.recover()
             inspection_scheduler.start()
             try:
                 yield
             finally:
                 await inspection_scheduler.close()
+                await inspection_coordinator.close()
                 await coordinator.close()
                 await providers.close()
 

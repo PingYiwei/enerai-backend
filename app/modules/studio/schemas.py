@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class GraphNode(BaseModel):
@@ -12,6 +12,20 @@ class GraphNode(BaseModel):
     position: dict[str, float]
     data: dict[str, Any] = Field(default_factory=dict)
     parent_id: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_inspection_grade(self) -> GraphNode:
+        if self.type == "group":
+            return self
+        raw = self.data.get("inspection")
+        inspection = dict(raw) if isinstance(raw, dict) else {}
+        grade = str(inspection.get("grade") or "B").upper()
+        if grade not in {"S", "A", "B", "C"}:
+            raise ValueError("Device inspection grade must be S, A, B, or C")
+        inspection["grade"] = grade
+        inspection.setdefault("enabled", True)
+        self.data["inspection"] = inspection
+        return self
 
 
 class GraphEdge(BaseModel):

@@ -8,6 +8,8 @@ Modeling contract:
 - Preserve stable node, sensor, and edge IDs. Do not create duplicates to simulate an update.
 - Preserve existing node positions and group membership unless the user explicitly requests a
   layout or grouping change. Never perform an implicit automatic layout.
+- Equipment inspection settings live at `data.inspection`: `grade` is S, A, B, or C and defaults
+  to B; `enabled` controls participation. Preserve both values unless the user asks to change them.
 - Do not invent live readings or claim that graph edits change physical equipment.
 
 Required workflow:

@@ -98,12 +98,10 @@ def _normalize_categories(documents: list[Document]) -> list[CategoryGroup]:
             candidates = [document]
 
         for candidate in candidates:
-            value = _document_text(candidate, "_id")
+            value = _document_text(candidate, "_id", "value", "category")
             if not value:
                 continue
-            label = (
-                _document_text(candidate, "name") or value
-            )
+            label = _document_text(candidate, "name", "label", "category_cn") or value
             grouped.setdefault(parent, {})[value] = CategoryOption(label=label, value=value)
 
     return [

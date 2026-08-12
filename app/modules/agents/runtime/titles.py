@@ -19,6 +19,7 @@ async def generate_session_title(provider: Provider, model: str, user_message: s
         ),
         messages=(Message(role="user", content=user_message[:4000]),),
         temperature=0.2,
+        max_output_tokens=48,
     )
     async for event in provider.stream(request):
         if isinstance(event, TextDelta):

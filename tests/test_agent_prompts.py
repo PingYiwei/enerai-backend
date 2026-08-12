@@ -35,11 +35,13 @@ def test_studio_prompt_contains_atomic_graph_contract_and_runtime_clock() -> Non
     assert "Local calendar date: 2026-08-12 (Wednesday)" in prompt
 
 
-def test_non_studio_surfaces_use_the_read_only_insight_profile() -> None:
+def test_inspection_surface_uses_a_dedicated_read_only_profile() -> None:
     prompt = render_agent_system_prompt(
         "inspection",
         now=datetime(2026, 8, 11, tzinfo=UTC),
     )
 
-    assert "EnerAI Insight Agent" in prompt
+    assert "EnerAI Auto-inspection Agent" in prompt
+    assert "planned unavailable properties" in prompt
+    assert "data freshness" in prompt
     assert "EnerAI Studio Agent" not in prompt
