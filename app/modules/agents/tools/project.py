@@ -50,9 +50,7 @@ def _validate_query_form(query: str) -> None:
         )
 
 
-async def _context_project(
-    database: AsyncDatabase[Document], context: ToolContext
-) -> Document:
+async def _context_project(database: AsyncDatabase[Document], context: ToolContext) -> Document:
     return await owned_project(
         database,
         Principal(user_id=context.user_id, username=""),
@@ -60,20 +58,29 @@ async def _context_project(
     )
 
 
-def _node_device(project: Document, node_id: str) -> tuple[str, str]:
+def _node_device(project: Document, label: str) -> str:
+    matches: list[str] = []
     for node in project.get("nodes", []):
-        if str(node.get("id") or "") != node_id:
-            continue
         data = node.get("data")
         if not isinstance(data, dict):
-            break
+            continue
+        node_label = str(data.get("label") or data.get("name") or node.get("id") or "").strip()
+        if node_label != label:
+            continue
         device_id = str(data.get("name") or data.get("label") or "").strip()
         if device_id:
-            return str(data.get("name") or data.get("label") or node_id), device_id
-        break
+            matches.append(device_id)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise AppError(
+            "ambiguous_project_node_label",
+            f'Multiple project nodes use the RDF label "{label}"',
+            status_code=422,
+        )
     raise AppError(
         "project_node_not_found",
-        "Node was not found or does not have a data-source device name",
+        "No project node with this RDF label has a data-source device name",
         status_code=404,
     )
 
@@ -133,9 +140,9 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
         )
 
     async def get_device_properties(arguments: JsonObject, context: ToolContext) -> ToolResult:
-        node_id = str(arguments["node_id"]).strip()
+        label = str(arguments["label"]).strip()
         project = await _context_project(database, context)
-        node_name, device_id = _node_device(project, node_id)
+        device_id = _node_device(project, label)
         catalog = await properties(
             database,
             Principal(user_id=context.user_id, username=""),
@@ -146,8 +153,7 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
             tool_call_id="",
             content=json.dumps(
                 {
-                    "node_id": node_id,
-                    "node_name": node_name,
+                    "label": label,
                     "device_id": device_id,
                     "properties": catalog.items,
                     "total": catalog.total,
@@ -158,9 +164,9 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
         )
 
     async def query_device_data(arguments: JsonObject, context: ToolContext) -> ToolResult:
-        node_id = str(arguments["node_id"]).strip()
+        label = str(arguments["label"]).strip()
         project = await _context_project(database, context)
-        _, device_id = _node_device(project, node_id)
+        device_id = _node_device(project, label)
         property_values = arguments.get("properties")
         request = DataQuery(
             device_id=device_id,
@@ -215,12 +221,13 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
             name="get_project_device_properties",
             description=(
                 "List properties available from the operational data source for one Reality Model "
-                "node. Use this before querying the node's time-series data."
+                "node. Pass its exact device label from an explicit user reference or the project "
+                "RDF. Use this before querying the node's time-series data."
             ),
             input_schema={
                 "type": "object",
-                "properties": {"node_id": {"type": "string", "minLength": 1, "maxLength": 500}},
-                "required": ["node_id"],
+                "properties": {"label": {"type": "string", "minLength": 1, "maxLength": 500}},
+                "required": ["label"],
                 "additionalProperties": False,
             },
             execute=get_device_properties,
@@ -231,12 +238,13 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
             name="query_project_device_data",
             description=(
                 "Query time-series data for one Reality Model node and a bounded ISO-8601 "
-                "time range. Call get_project_device_properties first to choose properties."
+                "time range. Pass its exact device label and call "
+                "get_project_device_properties first to choose properties."
             ),
             input_schema={
                 "type": "object",
                 "properties": {
-                    "node_id": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "label": {"type": "string", "minLength": 1, "maxLength": 500},
                     "properties": {
                         "type": "array",
                         "items": {"type": "string"},
@@ -245,7 +253,7 @@ def project_tools(database: AsyncDatabase[Document]) -> tuple[Tool, ...]:
                     "start_time": {"type": "string", "format": "date-time"},
                     "end_time": {"type": "string", "format": "date-time"},
                 },
-                "required": ["node_id", "start_time", "end_time"],
+                "required": ["label", "start_time", "end_time"],
                 "additionalProperties": False,
             },
             execute=query_device_data,

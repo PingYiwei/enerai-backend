@@ -35,7 +35,8 @@ class FakeDatabase:
                         "id": "chiller-1",
                         "type": "equipment",
                         "data": {
-                            "name": "CH-1",
+                            "label": "CH-1",
+                            "name": "remote-chiller-001",
                             "category": "Centrifugal_Chiller",
                             "sensors": [
                                 {
@@ -63,7 +64,8 @@ async def test_project_tools_expose_rdf_instead_of_studio_graph() -> None:
     assert "get_project_rdf" in tools
     assert "query_project_rdf" in tools
     assert "get_project_graph" in {
-        tool.name for tool in studio_tools(FakeDatabase())  # type: ignore[arg-type]
+        tool.name
+        for tool in studio_tools(FakeDatabase())  # type: ignore[arg-type]
     }
 
     result = await tools["get_project_rdf"].execute({}, CONTEXT)
@@ -131,7 +133,7 @@ async def test_device_data_tools_follow_remote_data_api_contract(
     ) -> PropertyCatalog:
         property_calls.append(device_ids)
         return PropertyCatalog(
-            items=[{"device_id": "CH-1", "name": "temperature", "unit": "°C"}],
+            items=[{"device_id": "remote-chiller-001", "name": "temperature", "unit": "°C"}],
             total=1,
         )
 
@@ -145,37 +147,55 @@ async def test_device_data_tools_follow_remote_data_api_contract(
 
     assert "get_project_properties" not in tools
     assert "query_project_data" not in tools
-    assert tools["get_project_device_properties"].input_schema["required"] == ["node_id"]
+    assert tools["get_project_device_properties"].input_schema["required"] == ["label"]
     assert tools["query_project_device_data"].input_schema["required"] == [
-        "node_id",
+        "label",
         "start_time",
         "end_time",
     ]
 
     catalog_result = await tools["get_project_device_properties"].execute(
-        {"node_id": "chiller-1"}, CONTEXT
+        {"label": "CH-1"}, CONTEXT
     )
     assert json.loads(catalog_result.content) == {
-        "node_id": "chiller-1",
-        "node_name": "CH-1",
-        "device_id": "CH-1",
-        "properties": [{"device_id": "CH-1", "name": "temperature", "unit": "°C"}],
+        "label": "CH-1",
+        "device_id": "remote-chiller-001",
+        "properties": [{"device_id": "remote-chiller-001", "name": "temperature", "unit": "°C"}],
         "total": 1,
     }
-    assert property_calls == [["CH-1"]]
+    assert property_calls == [["remote-chiller-001"]]
 
     query_result = await tools["query_project_device_data"].execute(
         {
-            "node_id": "chiller-1",
+            "label": "CH-1",
             "properties": ["temperature"],
             "start_time": "2026-08-12T00:00:00+00:00",
             "end_time": "2026-08-12T01:00:00+00:00",
         },
         CONTEXT,
     )
-    assert json.loads(query_result.content) == {"data": {"device_id": "CH-1", "points": []}}
+    assert json.loads(query_result.content) == {
+        "data": {"device_id": "remote-chiller-001", "points": []}
+    }
     assert len(query_calls) == 1
-    assert query_calls[0].device_id == "CH-1"
+    assert query_calls[0].device_id == "remote-chiller-001"
     assert query_calls[0].properties == ["temperature"]
     assert query_calls[0].start_time.isoformat() == "2026-08-12T00:00:00+00:00"
     assert query_calls[0].end_time.isoformat() == "2026-08-12T01:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_device_data_tool_rejects_ambiguous_device_labels() -> None:
+    database = FakeDatabase()
+    duplicate = {
+        **database.projects.document["nodes"][0],
+        "id": "chiller-2",
+        "data": {**database.projects.document["nodes"][0]["data"]},
+    }
+    database.projects.document["nodes"].append(duplicate)
+    tools = {tool.name: tool for tool in project_tools(database)}  # type: ignore[arg-type]
+
+    with pytest.raises(AppError) as captured:
+        await tools["get_project_device_properties"].execute({"label": "CH-1"}, CONTEXT)
+
+    assert captured.value.code == "ambiguous_project_node_label"

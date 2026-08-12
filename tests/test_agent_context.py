@@ -14,6 +14,7 @@ def test_context_references_are_projected_without_changing_user_text() -> None:
             ),
         ],
     )
-    assert "node: Chiller 1 (chiller-1)" in content
+    assert "node label: Chiller 1" in content
+    assert "chiller-1" not in content
     assert "report time ranges, units, data gaps" in content
     assert content.endswith("User request:\nCompare the last day.")

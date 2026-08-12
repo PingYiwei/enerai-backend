@@ -81,7 +81,12 @@ async def validate_references(
 def contextual_content(content: str, references: list[ContextReference]) -> str:
     if not references:
         return content
-    lines = [f"- {reference.type}: {reference.name} ({reference.id})" for reference in references]
+    lines = [
+        f"- node label: {reference.name}"
+        if reference.type == "node"
+        else f"- {reference.type}: {reference.name} ({reference.id})"
+        for reference in references
+    ]
     skill_guidance = [
         SKILLS[reference.id][1] for reference in references if reference.type == "skill"
     ]

@@ -12,6 +12,7 @@ def test_insight_prompt_contains_analysis_contract_and_runtime_clock() -> None:
 
     assert "EnerAI Insight Agent" in prompt
     assert "query_project_device_data" in prompt
+    assert "explicitly references a node with `@`" in prompt
     assert "observed evidence" in prompt
     assert "2026-08-11T04:05:06+00:00" in prompt
     assert "2026-08-11T12:05:06+08:00" in prompt

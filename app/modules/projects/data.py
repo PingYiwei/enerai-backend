@@ -476,39 +476,45 @@ async def project_point_scheme(database: AsyncDatabase[Document], project: Docum
 
 
 def _point_scheme_rows(scheme: PointScheme) -> list[list[str]]:
-    rows = [[
-        "section",
-        "point_name",
-        "device_name",
-        "property_name",
-        "property_name_cn",
-        "unit",
-        "data_type",
-        "range",
-    ]]
+    rows = [
+        [
+            "section",
+            "point_name",
+            "device_name",
+            "property_name",
+            "property_name_cn",
+            "unit",
+            "data_type",
+            "range",
+        ]
+    ]
     for section, items in (("inherent", scheme.inherent), ("calculate", scheme.calculate)):
         for item in items:
-            rows.append([
-                section,
-                item.point_name,
-                item.device_name,
-                item.property_name,
-                item.property_name_cn,
-                item.unit,
-                item.data_type,
-                item.range,
-            ])
+            rows.append(
+                [
+                    section,
+                    item.point_name,
+                    item.device_name,
+                    item.property_name,
+                    item.property_name_cn,
+                    item.unit,
+                    item.data_type,
+                    item.range,
+                ]
+            )
     for sensor in scheme.sensor:
-        rows.append([
-            "sensor",
-            sensor.sensor_name,
-            sensor.device_name,
-            sensor.category,
-            sensor.category_cn,
-            "",
-            "",
-            sensor.description,
-        ])
+        rows.append(
+            [
+                "sensor",
+                sensor.sensor_name,
+                sensor.device_name,
+                sensor.category,
+                sensor.category_cn,
+                "",
+                "",
+                sensor.description,
+            ]
+        )
     return rows
 
 
@@ -529,10 +535,7 @@ def _excel_column_name(index: int) -> str:
 
 def _xml_text(value: str) -> str:
     return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
     )
 
 
@@ -567,8 +570,8 @@ def point_scheme_xlsx(scheme: PointScheme) -> bytes:
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
         '<sheetViews><sheetView workbookViewId="0">'
         '<pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/>'
-        '</sheetView></sheetViews>'
-        f'<cols>{columns}</cols><sheetData>{"".join(sheet_rows)}</sheetData>'
+        "</sheetView></sheetViews>"
+        f"<cols>{columns}</cols><sheetData>{''.join(sheet_rows)}</sheetData>"
         f'<autoFilter ref="A1:H{len(rows)}"/></worksheet>'
     )
     styles = (
@@ -582,14 +585,14 @@ def point_scheme_xlsx(scheme: PointScheme) -> bytes:
         '<bgColor indexed="64"/></patternFill></fill></fills>'
         '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
-        '</cellStyleXfs>'
+        "</cellStyleXfs>"
         '<cellXfs count="3">'
         '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'
         '<xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" '
         'applyFill="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
         '<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>'
         '</cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/>'
-        '</cellStyles></styleSheet>'
+        "</cellStyles></styleSheet>"
     )
     content_types = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -603,7 +606,7 @@ def point_scheme_xlsx(scheme: PointScheme) -> bytes:
         'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
         '<Override PartName="/xl/styles.xml" '
         'ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
-        '</Types>'
+        "</Types>"
     )
     root_relationships = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -659,7 +662,7 @@ def project_rdf(project: Document) -> str:
     node_by_id = {str(node.get("id")): node for node in project.get("nodes", [])}
     for node in project.get("nodes", []):
         data = node.get("data", {}) if isinstance(node.get("data"), dict) else {}
-        name = str(data.get("name") or data.get("label") or node.get("id") or "")
+        name = str(data.get("label") or data.get("name") or node.get("id") or "")
         if not name:
             continue
         node_ref = f"enerai:{_uri_part(name)}"
@@ -694,7 +697,7 @@ def project_rdf(project: Document) -> str:
             if not child:
                 continue
             child_data = child.get("data", {}) if isinstance(child.get("data"), dict) else {}
-            child_name = str(child_data.get("name") or child_data.get("label") or child_id)
+            child_name = str(child_data.get("label") or child_data.get("name") or child_id)
             child_ref = f"enerai:{_uri_part(child_name)}"
             add(node_ref, "brick:hasPart", child_ref)
             add(child_ref, "brick:isPartOf", node_ref)
@@ -705,8 +708,8 @@ def project_rdf(project: Document) -> str:
             continue
         source_data = source.get("data", {}) if isinstance(source.get("data"), dict) else {}
         target_data = target.get("data", {}) if isinstance(target.get("data"), dict) else {}
-        source_name = source_data.get("name") or source_data.get("label") or source.get("id")
-        target_name = target_data.get("name") or target_data.get("label") or target.get("id")
+        source_name = source_data.get("label") or source_data.get("name") or source.get("id")
+        target_name = target_data.get("label") or target_data.get("name") or target.get("id")
         source_ref = f"enerai:{_uri_part(source_name)}"
         target_ref = f"enerai:{_uri_part(target_name)}"
         add(source_ref, "brick:feed", target_ref)
