@@ -82,6 +82,13 @@ async def test_artifact_is_written_to_minio(monkeypatch: pytest.MonkeyPatch) -> 
     assert storage.upload["object_name"].startswith(
         "artifacts/prj_test/ses_test/art_"
     )
+    assert storage.upload["metadata"] == {
+        "artifact-id": summary.id,
+        "owner-id": "usr_test",
+        "project-id": "prj_test",
+        "session-id": "ses_test",
+        "run-id": "run_test",
+    }
     assert database.artifacts.inserted is not None
     assert database.artifacts.inserted["storage_bucket"] == "enerai"
     assert "file_id" not in database.artifacts.inserted

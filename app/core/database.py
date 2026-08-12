@@ -65,7 +65,14 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
                     ("session_id", ASCENDING),
                     ("created_at", DESCENDING),
                 ]
-            )
+            ),
+            IndexModel(
+                [
+                    ("owner_id", ASCENDING),
+                    ("project_id", ASCENDING),
+                    ("completed_at", DESCENDING),
+                ]
+            ),
         ]
     )
     await database.agent_events.create_indexes(

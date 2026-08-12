@@ -8,6 +8,7 @@ def test_frontend_critical_routes_are_present_in_openapi() -> None:
     expected = {
         "/api/v1/auth/token": "post",
         "/api/v1/projects": "get",
+        "/api/v1/projects/{project_id}/token-usage": "get",
         "/api/v1/projects/{project_id}/studio/graph": "put",
         "/api/v1/projects/{project_id}/insight/attachments": "post",
         "/api/v1/projects/{project_id}/insight/context-options": "get",

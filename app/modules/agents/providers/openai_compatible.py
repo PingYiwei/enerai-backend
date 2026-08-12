@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
-import httpx
+from openai import AsyncOpenAI
 
 from app.modules.agents.runtime.types import (
     ImageInput,
@@ -38,15 +37,20 @@ class OpenAICompatibleProvider:
     def __init__(
         self,
         config: OpenAICompatibleConfig,
-        client: httpx.AsyncClient | None = None,
+        client: AsyncOpenAI | None = None,
     ) -> None:
         self._config = config
         self._owns_client = client is None
-        self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
+        self._client = client or AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            default_headers=config.headers,
+            timeout=config.timeout_seconds,
+        )
 
     async def close(self) -> None:
         if self._owns_client:
-            await self._client.aclose()
+            await self._client.close()
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
         if self._config.api_style == "responses":
@@ -55,32 +59,6 @@ class OpenAICompatibleProvider:
             return
         async for event in self._stream_chat_completions(request):
             yield event
-
-    def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._config.api_key}",
-            "Content-Type": "application/json",
-            **self._config.headers,
-        }
-
-    async def _sse(self, path: str, payload: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
-        url = f"{self._config.base_url.rstrip('/')}/{path.lstrip('/')}"
-        async with self._client.stream(
-            "POST",
-            url,
-            headers=self._headers(),
-            json=payload,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if not data or data == "[DONE]":
-                    continue
-                decoded = json.loads(data)
-                if isinstance(decoded, dict):
-                    yield decoded
 
     async def _stream_chat_completions(
         self, request: ProviderRequest
@@ -111,42 +89,35 @@ class OpenAICompatibleProvider:
         started_calls: set[int] = set()
         response_id: str | None = None
         finish_reason = "stop"
-        async for chunk in self._sse("chat/completions", payload):
-            response_id = cast(str | None, chunk.get("id")) or response_id
-            usage = chunk.get("usage")
-            if isinstance(usage, dict):
-                yield UsageUpdated(_chat_usage(usage))
-            choices = chunk.get("choices")
-            if not isinstance(choices, list) or not choices:
+        stream = await self._client.chat.completions.create(**cast(Any, payload))
+        async for chunk in stream:
+            response_id = chunk.id or response_id
+            if chunk.usage is not None:
+                yield UsageUpdated(_chat_usage(chunk.usage.model_dump()))
+            if not chunk.choices:
                 continue
-            choice = choices[0]
-            if not isinstance(choice, dict):
-                continue
-            finish_reason = _stop_reason(choice.get("finish_reason") or finish_reason)
-            delta = choice.get("delta")
-            if not isinstance(delta, dict):
-                continue
-            content = delta.get("content")
+            choice = chunk.choices[0]
+            finish_reason = _stop_reason(choice.finish_reason or finish_reason)
+            delta = choice.delta
+            content = delta.content
             if isinstance(content, str) and content:
                 yield TextDelta(content)
-            reasoning = delta.get("reasoning_content") or delta.get("reasoning")
+            reasoning = getattr(delta, "reasoning_content", None) or getattr(
+                delta, "reasoning", None
+            )
             if isinstance(reasoning, str) and reasoning:
                 yield ReasoningDelta(reasoning)
-            tool_calls = delta.get("tool_calls")
-            if not isinstance(tool_calls, list):
+            if not delta.tool_calls:
                 continue
-            for raw_call in tool_calls:
-                if not isinstance(raw_call, dict):
-                    continue
-                index = int(raw_call.get("index", 0))
-                function = raw_call.get("function")
-                function = function if isinstance(function, dict) else {}
-                call_id = str(raw_call.get("id") or "")
-                name = str(function.get("name") or "")
+            for raw_call in delta.tool_calls:
+                index = raw_call.index
+                function = raw_call.function
+                call_id = raw_call.id or ""
+                name = function.name or "" if function is not None else ""
                 if index not in started_calls:
                     started_calls.add(index)
                     yield ToolCallStarted(index=index, id=call_id, name=name)
-                arguments = function.get("arguments")
+                arguments = function.arguments if function is not None else None
                 if isinstance(arguments, str) and arguments:
                     yield ToolCallArgumentsDelta(index=index, delta=arguments)
         yield ResponseCompleted(stop_reason=_stop_reason(finish_reason), response_id=response_id)
@@ -177,49 +148,48 @@ class OpenAICompatibleProvider:
 
         item_indexes: dict[str, int] = {}
         next_index = 0
-        async for event in self._sse("responses", payload):
-            event_type = event.get("type")
+        stream = await self._client.responses.create(**cast(Any, payload))
+        async for event in stream:
+            event_type = event.type
             if event_type == "response.output_text.delta":
-                delta = event.get("delta")
+                delta = event.delta
                 if isinstance(delta, str):
                     yield TextDelta(delta)
             elif event_type in {
                 "response.reasoning_text.delta",
                 "response.reasoning_summary_text.delta",
             }:
-                delta = event.get("delta")
+                delta = event.delta
                 if isinstance(delta, str):
                     yield ReasoningDelta(delta)
             elif event_type == "response.output_item.added":
-                item = event.get("item")
-                if isinstance(item, dict) and item.get("type") == "function_call":
-                    item_id = str(item.get("id") or item.get("call_id") or next_index)
-                    index = int(event.get("output_index", next_index))
+                item = event.item
+                if item.type == "function_call":
+                    item_id = str(item.id or item.call_id or next_index)
+                    index = event.output_index
                     next_index = max(next_index, index + 1)
                     item_indexes[item_id] = index
                     yield ToolCallStarted(
                         index=index,
-                        id=str(item.get("call_id") or item.get("id") or ""),
-                        name=str(item.get("name") or ""),
+                        id=item.call_id or item.id or "",
+                        name=item.name,
                     )
             elif event_type == "response.function_call_arguments.delta":
-                item_id = str(event.get("item_id") or "")
-                index = item_indexes.get(item_id, int(event.get("output_index", 0)))
-                delta = event.get("delta")
+                item_id = event.item_id
+                index = item_indexes.get(item_id, event.output_index)
+                delta = event.delta
                 if isinstance(delta, str):
                     yield ToolCallArgumentsDelta(index=index, delta=delta)
             elif event_type == "response.completed":
-                response = event.get("response")
-                if isinstance(response, dict):
-                    usage = response.get("usage")
-                    if isinstance(usage, dict):
-                        yield UsageUpdated(_responses_usage(usage))
-                    yield ResponseCompleted(
-                        stop_reason=_responses_stop_reason(response),
-                        response_id=str(response.get("id") or "") or None,
-                    )
+                response = event.response
+                if response.usage is not None:
+                    yield UsageUpdated(_responses_usage(response.usage.model_dump()))
+                yield ResponseCompleted(
+                    stop_reason=_responses_stop_reason(response.model_dump()),
+                    response_id=response.id or None,
+                )
             elif event_type in {"response.failed", "error"}:
-                error = event.get("error") or event.get("response") or event
+                error = getattr(event, "error", None) or getattr(event, "response", event)
                 raise RuntimeError(f"Provider response failed: {error}")
 
 

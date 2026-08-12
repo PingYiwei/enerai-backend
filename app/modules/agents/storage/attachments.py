@@ -79,9 +79,9 @@ async def create_attachment(
         content=content,
         content_type=media_type,
         metadata={
-            "attachment_id": attachment_id,
-            "owner_id": principal.user_id,
-            "project_id": project_id,
+            "attachment-id": attachment_id,
+            "owner-id": principal.user_id,
+            "project-id": project_id,
         },
     )
     document = {

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any
+from datetime import date, datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,27 @@ class ProjectDetail(ProjectSummary):
 class ProjectList(BaseModel):
     items: list[ProjectSummary]
     total: int
+
+
+class AgentModuleTokenUsage(BaseModel):
+    module: Literal["insight", "studio", "inspection"]
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class DailyTokenUsage(BaseModel):
+    date: date
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ProjectTokenUsage(BaseModel):
+    today: date
+    today_total_tokens: int
+    by_module: list[AgentModuleTokenUsage]
+    daily: list[DailyTokenUsage]
 
 
 class DataSourceUpdate(BaseModel):
