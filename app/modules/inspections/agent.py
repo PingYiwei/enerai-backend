@@ -19,6 +19,7 @@ from app.modules.agents.providers.registry import ProviderRegistry
 from app.modules.agents.runtime.engine import AgentEngine, AgentRunRequest
 from app.modules.agents.runtime.types import JsonObject, Message, ToolResult, Usage
 from app.modules.agents.tools.base import Tool, ToolContext
+from app.modules.agents.tools.project import project_tools
 from app.modules.auth.model_settings import resolve_provider_runtime
 from app.modules.inspections.schemas import (
     DeviceInspectionManifest,
@@ -27,6 +28,9 @@ from app.modules.inspections.schemas import (
     InspectionNodeResult,
     InspectionOverallConclusion,
     InspectionPlanningManifest,
+    InspectionTaskEdge,
+    InspectionTaskGraph,
+    InspectionTaskNode,
 )
 from app.modules.inspections.screening import screen_device, summarize_payload
 from app.modules.inspections.service import append_event
@@ -135,6 +139,74 @@ def _overall_schema() -> JsonObject:
         ],
         "additionalProperties": False,
     }
+
+
+def _assignment_plan_schema() -> JsonObject:
+    return {
+        "type": "object",
+        "properties": {
+            "objective": {"type": "string", "minLength": 1, "maxLength": 2_000},
+            "scope_summary": {"type": "string", "minLength": 1, "maxLength": 2_000},
+            "steps": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 12,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "minLength": 1, "maxLength": 160},
+                        "description": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 1_000,
+                        },
+                    },
+                    "required": ["title", "description"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["objective", "scope_summary", "steps"],
+        "additionalProperties": False,
+    }
+
+
+def _assignment_result_schema() -> JsonObject:
+    schema = _overall_schema()
+    properties = cast(JsonObject, schema["properties"])
+    properties["report_markdown"] = {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 40_000,
+    }
+    properties["findings"] = {
+        "type": "array",
+        "maxItems": 50,
+        "items": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "minLength": 1, "maxLength": 120},
+                "severity": {"type": "string", "enum": ["info", "warning", "critical"]},
+                "category": {"type": "string", "minLength": 1, "maxLength": 120},
+                "title": {"type": "string", "minLength": 1, "maxLength": 240},
+                "detail": {"type": "string", "minLength": 1, "maxLength": 4_000},
+                "node_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 30,
+                },
+                "evidence": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 30,
+                },
+            },
+            "required": ["code", "severity", "category", "title", "detail"],
+            "additionalProperties": False,
+        },
+    }
+    cast(list[str], schema["required"]).extend(["report_markdown", "findings"])
+    return schema
 
 
 class InspectionCoordinator:
@@ -259,6 +331,11 @@ class InspectionCoordinator:
             )
             planning = InspectionPlanningManifest.model_validate(run["planning_manifest"])
             snapshot = cast(Document, run["snapshot"])
+            if run.get("trigger") == "assignment":
+                await self._execute_assignment(
+                    run, principal, provider, runtime.model, planning, snapshot
+                )
+                return
             await self._set_stage(run_id, "stage:screening", "running")
             screenings: dict[str, Document] = {}
             for index, manifest in enumerate(planning.devices, start=1):
@@ -345,6 +422,250 @@ class InspectionCoordinator:
             raise
         except Exception as error:
             await self._finish(run_id, "failed", f"{type(error).__name__}: {error}")
+
+    async def _execute_assignment(
+        self,
+        run: Document,
+        principal: Principal,
+        provider: OpenAICompatibleProvider,
+        model: str,
+        planning: InspectionPlanningManifest,
+        snapshot: Document,
+    ) -> None:
+        run_id = str(run["_id"])
+        plan_holder: dict[str, Document] = {}
+        result_holder: dict[str, Document] = {}
+        await self._set_stage(run_id, "stage:planning", "running")
+
+        async def set_plan(arguments: JsonObject, _: ToolContext) -> ToolResult:
+            if "value" in plan_holder:
+                raise AppError(
+                    "assignment_plan_already_set",
+                    "The temporary assignment plan has already been submitted",
+                    status_code=409,
+                )
+            steps = cast(list[Document], arguments["steps"])
+            planned_steps: list[Document] = [
+                {
+                    "id": f"assignment:step:{index}",
+                    "title": str(step["title"]),
+                    "description": str(step["description"]),
+                }
+                for index, step in enumerate(steps, start=1)
+            ]
+            plan: Document = {
+                "objective": str(arguments["objective"]),
+                "scope_summary": str(arguments["scope_summary"]),
+                "steps": planned_steps,
+            }
+            graph_nodes = [
+                InspectionTaskNode(
+                    id="stage:planning",
+                    kind="stage",
+                    title="Agent interpret assignment",
+                    status="succeeded",
+                    progress=1,
+                ),
+                *[
+                    InspectionTaskNode(
+                        id=str(step["id"]),
+                        kind="stage",
+                        title=str(step["title"]),
+                        status="running" if index == 0 else "ready",
+                    )
+                    for index, step in enumerate(planned_steps)
+                ],
+                InspectionTaskNode(
+                    id="stage:report",
+                    kind="report",
+                    title="Deliver assignment result",
+                ),
+            ]
+            graph_edges: list[InspectionTaskEdge] = []
+            for index in range(len(graph_nodes) - 1):
+                source = graph_nodes[index].id
+                target = graph_nodes[index + 1].id
+                graph_edges.append(
+                    InspectionTaskEdge(
+                        id=f"flow:{source}:{target}",
+                        source=source,
+                        target=target,
+                        relation="produces" if target == "stage:report" else "flow",
+                    )
+                )
+            graph = InspectionTaskGraph(nodes=graph_nodes, edges=graph_edges).model_dump(
+                mode="json"
+            )
+            plan_holder["value"] = plan
+            await self._database.inspection_runs.update_one(
+                {"_id": run_id},
+                {"$set": {"assignment_plan": plan, "task_graph": graph}},
+            )
+            await append_event(
+                self._database,
+                run_id,
+                "assignment_plan_ready",
+                {"plan": plan, "task_graph": graph},
+            )
+            await self._update_progress(run_id, 0.12)
+            return ToolResult(
+                tool_call_id="",
+                content=json.dumps({"accepted": True, "step_count": len(steps)}),
+            )
+
+        async def submit_result(arguments: JsonObject, _: ToolContext) -> ToolResult:
+            if "value" not in plan_holder:
+                raise AppError(
+                    "assignment_plan_required",
+                    "Submit the temporary assignment plan before the result",
+                    status_code=422,
+                )
+            overall = InspectionOverallConclusion(
+                status=cast(Any, arguments["status"]),
+                executive_summary=str(arguments["executive_summary"]),
+                operating_assessment=str(arguments["operating_assessment"]),
+                anomaly_assessment=str(arguments["anomaly_assessment"]),
+                efficiency_assessment=str(arguments["efficiency_assessment"]),
+                optimization_opportunities=[
+                    str(item) for item in arguments.get("optimization_opportunities", [])
+                ],
+                data_quality_assessment=str(arguments["data_quality_assessment"]),
+                coverage_limitations=[
+                    str(item) for item in arguments.get("coverage_limitations", [])
+                ],
+                recommended_actions=[
+                    str(item) for item in arguments.get("recommended_actions", [])
+                ],
+                review_model=model,
+                reviewed_at=datetime.now(UTC),
+            ).model_dump(mode="json")
+            findings = [
+                InspectionFinding.model_validate(item).model_dump(mode="json")
+                for item in cast(list[Document], arguments.get("findings", []))
+            ]
+            result_holder["value"] = {
+                "overall": overall,
+                "findings": findings,
+                "report": {
+                    "title": "Temporary assignment result",
+                    "media_type": "text/markdown",
+                    "content": str(arguments["report_markdown"]),
+                    "created_at": datetime.now(UTC),
+                },
+            }
+            return ToolResult(
+                tool_call_id="",
+                content="Temporary assignment result accepted",
+                terminate=True,
+            )
+
+        tools = (
+            Tool(
+                name="set_assignment_plan",
+                description=(
+                    "Commit the temporary assignment objective, bounded scope, and execution steps "
+                    "before using investigation tools."
+                ),
+                input_schema=_assignment_plan_schema(),
+                execute=set_plan,
+                effect="write",
+                execution_mode="sequential",
+                result_visibility="both",
+                idempotent=True,
+            ),
+            *project_tools(self._database),
+            Tool(
+                name="submit_assignment_result",
+                description=(
+                    "Submit the final evidence-backed result for the temporary assignment."
+                ),
+                input_schema=_assignment_result_schema(),
+                execute=submit_result,
+                effect="write",
+                execution_mode="sequential",
+                result_visibility="both",
+                idempotent=True,
+            ),
+        )
+        usage = await self._agent_call(
+            run,
+            provider,
+            model,
+            new_id("assignment"),
+            [
+                Message(
+                    role="user",
+                    content=(
+                        "Execute this temporary assignment. Decide its scope and method before "
+                        "investigating. The Reality Model snapshot below is orientation context; "
+                        "use project tools for authoritative RDF or operational data.\n\n"
+                        + json.dumps(
+                            {
+                                "instruction": planning.instruction,
+                                "window": {
+                                    "start": planning.window_start.isoformat(),
+                                    "end": planning.window_end.isoformat(),
+                                },
+                                "reality_revision": planning.reality_revision,
+                                "nodes": [
+                                    {
+                                        "id": node.get("id"),
+                                        "type": node.get("type"),
+                                        "label": (
+                                            node.get("data", {}).get("label")
+                                            if isinstance(node.get("data"), dict)
+                                            else None
+                                        ),
+                                    }
+                                    for node in snapshot.get("nodes", [])
+                                    if isinstance(node, dict)
+                                ],
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                        )
+                    ),
+                )
+            ],
+            tools,
+            surface="assignment",
+            max_turns=20,
+        )
+        if "value" not in plan_holder:
+            raise RuntimeError("Temporary Assignment Agent did not submit an execution plan")
+        if "value" not in result_holder:
+            raise RuntimeError("Temporary Assignment Agent did not submit a final result")
+        result = result_holder["value"]
+        graph = await self._database.inspection_runs.find_one({"_id": run_id}, {"task_graph": 1})
+        task_graph = cast(Document, (graph or {}).get("task_graph") or {})
+        for node in task_graph.get("nodes", []):
+            if isinstance(node, dict):
+                node["status"] = "succeeded"
+                node["progress"] = 1
+        await self._database.inspection_runs.update_one(
+            {"_id": run_id},
+            {
+                "$set": {
+                    "task_graph": task_graph,
+                    "node_results": [],
+                    "findings": result["findings"],
+                    "overall_conclusion": result["overall"],
+                    "report": result["report"],
+                    "progress": 1,
+                }
+            },
+        )
+        await self._update_usage(run_id, usage)
+        await append_event(
+            self._database,
+            run_id,
+            "assignment_completed",
+            {"task_graph": task_graph, "conclusion": result["overall"]},
+        )
+        await append_event(
+            self._database, run_id, "report_ready", {"report": result["report"]}
+        )
+        await self._finish(run_id, "completed")
 
     async def _review_batch(
         self,
@@ -654,6 +975,9 @@ class InspectionCoordinator:
         operation_id: str,
         messages: list[Message],
         tools: tuple[Tool, ...],
+        *,
+        surface: str = "inspection",
+        max_turns: int = 12,
     ) -> Usage:
         run_id = str(run["_id"])
 
@@ -682,11 +1006,11 @@ class InspectionCoordinator:
                 user_id=str(run["owner_id"]),
                 model=model,
                 system_prompt=render_agent_system_prompt(
-                    "inspection", timezone_name=self._settings.agent_timezone
+                    surface, timezone_name=self._settings.agent_timezone
                 ),
                 messages=tuple(messages),
                 tools=tools,
-                max_turns=12,
+                max_turns=max_turns,
                 context_char_budget=self._settings.agent_context_char_budget,
             ),
             emit,

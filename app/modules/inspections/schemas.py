@@ -211,6 +211,18 @@ class InspectionPlanningManifest(BaseModel):
     devices: list[DeviceInspectionManifest]
 
 
+class AssignmentPlanStep(BaseModel):
+    id: str
+    title: str
+    description: str
+
+
+class AssignmentPlan(BaseModel):
+    objective: str
+    scope_summary: str
+    steps: list[AssignmentPlanStep]
+
+
 class InspectionOverallConclusion(BaseModel):
     status: ConclusionStatus
     executive_summary: str
@@ -251,6 +263,7 @@ class InspectionRun(BaseModel):
     instruction: str = ""
     graph_revision: int
     planning_manifest: InspectionPlanningManifest | None = None
+    assignment_plan: AssignmentPlan | None = None
     task_graph: InspectionTaskGraph = Field(
         default_factory=lambda: InspectionTaskGraph(nodes=[], edges=[])
     )

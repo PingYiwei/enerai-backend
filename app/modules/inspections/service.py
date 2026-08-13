@@ -133,6 +133,7 @@ async def create_run(
             "edges": snapshot.get("edges", []),
         },
         "planning_manifest": planning.model_dump(mode="json"),
+        "assignment_plan": None,
         "task_graph": task_graph.model_dump(mode="json"),
         "node_results": [],
         "findings": [],

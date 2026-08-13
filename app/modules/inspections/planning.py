@@ -142,7 +142,7 @@ def _declared_properties(node: Document) -> list[str]:
 def _scope_nodes(
     snapshot: Document, request: InspectionRunCreate, minimum: InspectionGrade
 ) -> list[Document]:
-    devices = [
+    return [
         node
         for node in snapshot.get("nodes", [])
         if isinstance(node, dict)
@@ -150,22 +150,6 @@ def _scope_nodes(
         and inspection_enabled(node)
         and GRADE_RANK[node_grade(node)] >= GRADE_RANK[minimum]
     ]
-    if request.trigger != "assignment" or not request.instruction.strip():
-        return devices
-    instruction = request.instruction.casefold()
-    explicit = [node for node in devices if node_label(node).casefold() in instruction]
-    if not explicit:
-        return devices
-    ids = {str(node.get("id")) for node in explicit}
-    for edge in snapshot.get("edges", []):
-        if not isinstance(edge, dict):
-            continue
-        source, target = str(edge.get("source")), str(edge.get("target"))
-        if source in ids:
-            ids.add(target)
-        if target in ids:
-            ids.add(source)
-    return [node for node in devices if str(node.get("id")) in ids]
 
 
 def _related(snapshot: Document, node_id: str) -> list[str]:
@@ -298,6 +282,43 @@ def build_task_graph(
     return InspectionTaskGraph(nodes=nodes, edges=edges)
 
 
+def build_assignment_task_graph() -> InspectionTaskGraph:
+    return InspectionTaskGraph(
+        nodes=[
+            InspectionTaskNode(
+                id="stage:planning",
+                kind="stage",
+                title="Agent interpret assignment",
+                status="ready",
+            ),
+            InspectionTaskNode(
+                id="stage:execution",
+                kind="stage",
+                title="Execute Agent plan",
+            ),
+            InspectionTaskNode(
+                id="stage:report",
+                kind="report",
+                title="Deliver assignment result",
+            ),
+        ],
+        edges=[
+            InspectionTaskEdge(
+                id="flow:planning:execution",
+                source="stage:planning",
+                target="stage:execution",
+                relation="flow",
+            ),
+            InspectionTaskEdge(
+                id="flow:execution:report",
+                source="stage:execution",
+                target="stage:report",
+                relation="produces",
+            ),
+        ],
+    )
+
+
 async def plan_inspection(
     database: AsyncDatabase[Document],
     principal: Principal,
@@ -307,6 +328,27 @@ async def plan_inspection(
     snapshot = await locked_snapshot(database, principal, project_id)
     selected_template = template(request.template_id or "full_inspection")
     minimum = request.minimum_grade or selected_template.default_minimum_grade
+    if request.trigger == "assignment":
+        now = datetime.now(UTC)
+        manifest = InspectionPlanningManifest(
+            reality_revision=int(snapshot.get("graph_revision", 0)),
+            template_id="temporary_assignment",
+            template_version=1,
+            instruction=request.instruction.strip(),
+            minimum_grade=minimum,
+            window_start=now - timedelta(minutes=request.lookback_minutes),
+            window_end=now,
+            data_source_status="unavailable",
+            premises=[
+                "The temporary Assignment Agent determines the task scope and execution method.",
+                (
+                    "Only evidence returned by read-only project tools may be treated as "
+                    "observed fact."
+                ),
+            ],
+            devices=[],
+        )
+        return snapshot, manifest, build_assignment_task_graph(), "Temporary assignment"
     devices = _scope_nodes(snapshot, request, minimum)
     if not devices:
         raise AppError(
