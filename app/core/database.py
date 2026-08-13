@@ -6,10 +6,12 @@ from typing import Any
 
 from pymongo import ASCENDING, DESCENDING, AsyncMongoClient, IndexModel
 from pymongo.asynchronous.database import AsyncDatabase
+from pymongo.errors import OperationFailure
 
 from app.core.config import Settings
 
 Document = dict[str, Any]
+OBSOLETE_INSPECTION_SCHEDULE_INDEX = "project_id_1_schedule_slot_1"
 
 
 async def create_indexes(database: AsyncDatabase[Document]) -> None:
@@ -100,6 +102,11 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
     await database.inspection_policies.create_indexes(
         [IndexModel([("project_id", ASCENDING)], unique=True)]
     )
+    try:
+        await database.inspection_runs.drop_index(OBSOLETE_INSPECTION_SCHEDULE_INDEX)
+    except OperationFailure as error:
+        if error.code not in {26, 27}:  # NamespaceNotFound, IndexNotFound
+            raise
     await database.inspection_runs.create_indexes(
         [
             IndexModel(
@@ -108,11 +115,6 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
                     ("project_id", ASCENDING),
                     ("started_at", DESCENDING),
                 ]
-            ),
-            IndexModel(
-                [("project_id", ASCENDING), ("schedule_slot", ASCENDING)],
-                unique=True,
-                sparse=True,
             ),
         ]
     )
