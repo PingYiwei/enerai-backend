@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pymongo import ASCENDING, DESCENDING, ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
@@ -51,6 +52,25 @@ def _inspection_run(document: Document) -> InspectionRun:
 
 def _schedule(document: Document) -> InspectionSchedule:
     return InspectionSchedule.model_validate({**document, "id": str(document["_id"])})
+
+
+def next_schedule_run(schedule: Document | InspectionScheduleCreate, after: datetime) -> datetime:
+    payload = schedule if isinstance(schedule, dict) else schedule.model_dump()
+    recurrence = payload.get("recurrence")
+    if recurrence is None:
+        return after + timedelta(minutes=int(payload.get("interval_minutes", 1_440)))
+    if recurrence == "hour":
+        return after + timedelta(hours=1)
+
+    zone = ZoneInfo(str(payload.get("timezone") or "Asia/Shanghai"))
+    local_after = after.astimezone(zone)
+    hour, minute = (int(part) for part in str(payload["scheduled_time"]).split(":"))
+    candidate = datetime.combine(local_after.date(), time(hour, minute), tzinfo=zone)
+    if recurrence == "week":
+        candidate += timedelta(days=(int(payload["weekday"]) - local_after.weekday()) % 7)
+    if candidate <= local_after:
+        candidate += timedelta(days=7 if recurrence == "week" else 1)
+    return candidate.astimezone(UTC)
 
 
 async def append_event(
@@ -253,7 +273,7 @@ async def create_schedule(
         "owner_id": principal.user_id,
         **body.model_dump(mode="json"),
         "minimum_grade": body.minimum_grade or selected.default_minimum_grade,
-        "next_run_at": now + timedelta(minutes=body.interval_minutes),
+        "next_run_at": next_schedule_run(body, now),
         "last_run_at": None,
         "created_at": now,
         "updated_at": now,
@@ -292,8 +312,10 @@ async def update_schedule(
     values = body.model_dump(exclude_none=True, mode="json")
     if "template_id" in values and "minimum_grade" not in values:
         values["minimum_grade"] = template(values["template_id"]).default_minimum_grade
-    if "interval_minutes" in values:
-        values["next_run_at"] = datetime.now(UTC) + timedelta(minutes=values["interval_minutes"])
+    schedule_values = {**current, **values}
+    InspectionScheduleCreate.model_validate(schedule_values)
+    if {"interval_minutes", "recurrence", "scheduled_time", "weekday", "timezone"} & values.keys():
+        values["next_run_at"] = next_schedule_run(schedule_values, datetime.now(UTC))
     values["updated_at"] = datetime.now(UTC)
     document = await database.inspection_schedules.find_one_and_update(
         {"_id": schedule_id, "owner_id": principal.user_id},

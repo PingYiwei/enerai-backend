@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 type InspectionGrade = Literal["S", "A", "B", "C"]
 type InspectionTrigger = Literal["manual", "schedule", "assignment"]
+type InspectionRecurrence = Literal["hour", "day", "week"]
 type InspectionStatus = Literal[
     "planning",
     "ready",
@@ -63,7 +64,19 @@ class InspectionScheduleCreate(BaseModel):
     template_id: Literal["full_inspection", "critical_equipment"] = "full_inspection"
     minimum_grade: InspectionGrade | None = None
     interval_minutes: int = Field(default=1_440, ge=5, le=10_080)
+    recurrence: InspectionRecurrence | None = None
+    scheduled_time: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    timezone: Literal["Asia/Shanghai"] = "Asia/Shanghai"
     lookback_minutes: int = Field(default=1_440, ge=15, le=43_200)
+
+    @model_validator(mode="after")
+    def validate_recurrence(self) -> InspectionScheduleCreate:
+        if self.recurrence in {"day", "week"} and self.scheduled_time is None:
+            raise ValueError("Daily and weekly schedules require a scheduled time")
+        if self.recurrence == "week" and self.weekday is None:
+            raise ValueError("Weekly schedules require a weekday")
+        return self
 
 
 class InspectionScheduleUpdate(BaseModel):
@@ -72,6 +85,10 @@ class InspectionScheduleUpdate(BaseModel):
     template_id: Literal["full_inspection", "critical_equipment"] | None = None
     minimum_grade: InspectionGrade | None = None
     interval_minutes: int | None = Field(default=None, ge=5, le=10_080)
+    recurrence: InspectionRecurrence | None = None
+    scheduled_time: str | None = Field(default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    timezone: Literal["Asia/Shanghai"] | None = None
     lookback_minutes: int | None = Field(default=None, ge=15, le=43_200)
 
 

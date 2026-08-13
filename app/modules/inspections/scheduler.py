@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import suppress
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -12,7 +12,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.core.security import Principal
 from app.modules.inspections.agent import InspectionCoordinator
 from app.modules.inspections.schemas import InspectionRunCreate
-from app.modules.inspections.service import create_run, due_schedules
+from app.modules.inspections.service import create_run, due_schedules, next_schedule_run
 
 Document = dict[str, Any]
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ class InspectionScheduler:
                 {
                     "$set": {
                         "last_run_at": now,
-                        "next_run_at": now + timedelta(minutes=int(schedule["interval_minutes"])),
+                        "next_run_at": next_schedule_run(schedule, now),
                         "updated_at": now,
                     }
                 },

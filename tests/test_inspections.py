@@ -10,7 +10,7 @@ from app.core.errors import AppError
 from app.core.security import Principal
 from app.modules.inspections import planning
 from app.modules.inspections.router import event_data_json
-from app.modules.inspections.schemas import InspectionRunCreate
+from app.modules.inspections.schemas import InspectionRunCreate, InspectionScheduleCreate
 from app.modules.inspections.service import (
     _inspection_run,
     create_run,
@@ -18,8 +18,32 @@ from app.modules.inspections.service import (
     get_run,
     inspect_graph,
     list_runs,
+    next_schedule_run,
 )
 from app.modules.projects.schemas import PropertyCatalog
+
+
+def test_daily_schedule_uses_the_next_beijing_wall_clock_time() -> None:
+    schedule = InspectionScheduleCreate(
+        recurrence="day",
+        scheduled_time="09:30",
+    )
+
+    assert next_schedule_run(schedule, datetime(2026, 8, 13, 2, 0, tzinfo=UTC)) == datetime(
+        2026, 8, 14, 1, 30, tzinfo=UTC
+    )
+
+
+def test_weekly_schedule_uses_selected_weekday_and_time() -> None:
+    schedule = InspectionScheduleCreate(
+        recurrence="week",
+        weekday=4,
+        scheduled_time="18:00",
+    )
+
+    assert next_schedule_run(schedule, datetime(2026, 8, 13, 2, 0, tzinfo=UTC)) == datetime(
+        2026, 8, 14, 10, 0, tzinfo=UTC
+    )
 
 
 class FakeCursor:
