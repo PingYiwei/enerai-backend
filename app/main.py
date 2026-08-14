@@ -29,6 +29,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             inspection_coordinator = InspectionCoordinator(database, resolved, providers)
             inspection_scheduler = InspectionScheduler(database, inspection_coordinator)
             app.state.database = database
+            app.state.providers = providers
             app.state.agent_coordinator = coordinator
             app.state.inspection_coordinator = inspection_coordinator
             await cleanup_expired_drafts(database)

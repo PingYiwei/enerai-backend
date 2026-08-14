@@ -1,10 +1,16 @@
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 
 from app.api.dependencies import CurrentPrincipal, Database
+from app.core.config import Settings, get_settings
 from app.modules.optimizer.dataset_configs import DATASET_CONFIGS
+from app.modules.optimizer.engineering import (
+    engineering_config,
+    infer_topologies_with_llm,
+    update_engineering_config,
+)
 from app.modules.optimizer.models import (
     create_model,
     delete_model,
@@ -19,6 +25,9 @@ from app.modules.optimizer.schemas import (
     DeviceType,
     DeviceTypeList,
     DeviceTypeOption,
+    EngineeringConfigUpdate,
+    EngineeringConfigView,
+    EngineeringTopologyInference,
     ModelCreate,
     ModelList,
     ModelPredictRequest,
@@ -35,6 +44,35 @@ from app.modules.optimizer.service import (
 )
 
 router = APIRouter()
+
+
+@router.get("/engineering", response_model=EngineeringConfigView)
+async def read_engineering_config(
+    project_id: str, database: Database, principal: CurrentPrincipal
+) -> EngineeringConfigView:
+    return await engineering_config(database, principal, project_id)
+
+
+@router.put("/engineering", response_model=EngineeringConfigView)
+async def save_engineering_config(
+    project_id: str,
+    body: EngineeringConfigUpdate,
+    database: Database,
+    principal: CurrentPrincipal,
+) -> EngineeringConfigView:
+    return await update_engineering_config(database, principal, project_id, body)
+
+
+@router.post("/engineering/infer/llm", response_model=EngineeringTopologyInference)
+async def infer_engineering_topology_with_llm(
+    project_id: str,
+    request: Request,
+    database: Database,
+    principal: CurrentPrincipal,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> EngineeringTopologyInference:
+    providers = request.app.state.providers
+    return await infer_topologies_with_llm(database, principal, project_id, settings, providers)
 
 
 @router.post("/datasets", response_model=DatasetSummary, status_code=status.HTTP_201_CREATED)
@@ -145,9 +183,7 @@ async def model_predict(
     database: Database,
     principal: CurrentPrincipal,
 ) -> ModelPredictResponse:
-    return await predict_model_outputs(
-        database, principal, project_id, model_id, body.inputs
-    )
+    return await predict_model_outputs(database, principal, project_id, model_id, body.inputs)
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
