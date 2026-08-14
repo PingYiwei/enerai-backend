@@ -233,54 +233,76 @@ def _group_members(group_id: str, nodes: list[Document]) -> list[Document]:
     return sorted(result, key=lambda node: _label(node).casefold())
 
 
+def _model_group(
+    group_id: str, label: str, members: list[NodeEngineeringState]
+) -> EngineeringModelGroup:
+    device_types = {member.device_type for member in members}
+    device_type = next(iter(device_types)) if len(device_types) == 1 else "mixed"
+    derived: list[EngineeringDerivedValue] = []
+    metric = {
+        "chiller": ("q_cool_rated", "Total rated cooling capacity", "kW"),
+        "pump": ("p_rated", "Total rated pump power", "kW"),
+        "cooling_tower": ("p_rated_unit", "Total rated fan power", "kW"),
+    }.get(device_type)
+    if metric:
+        key, derived_label, unit = metric
+        values = [
+            parameter.value
+            for member in members
+            for parameter in member.parameters
+            if parameter.key == key and parameter.value is not None
+        ]
+        if len(values) == len(members):
+            derived.append(
+                EngineeringDerivedValue(
+                    key=key,
+                    label=derived_label,
+                    value=sum(values),
+                    unit=unit,
+                )
+            )
+    return EngineeringModelGroup(
+        group_id=group_id,
+        label=label,
+        device_type=device_type,
+        member_node_ids=[member.node_id for member in members],
+        member_labels=[member.label for member in members],
+        complete=all(member.complete for member in members),
+        derived_values=derived,
+    )
+
+
 def _model_groups(
     nodes: list[Document], node_states: list[NodeEngineeringState]
 ) -> list[EngineeringModelGroup]:
     state_by_id = {item.node_id: item for item in node_states}
+    grouped_node_ids: set[str] = set()
     result: list[EngineeringModelGroup] = []
     for group in nodes:
         if group.get("type") != "group":
             continue
         group_id = str(group.get("id") or "")
         members = [
-            member
+            state_by_id[str(member.get("id"))]
             for member in _group_members(group_id, nodes)
             if str(member.get("id")) in state_by_id
         ]
         if not members:
             continue
-        device_types = {str(member.get("type") or "node") for member in members}
-        device_type = next(iter(device_types)) if len(device_types) == 1 else "mixed"
-        derived: list[EngineeringDerivedValue] = []
-        metric = {
-            "chiller": ("q_cool_rated", "Total rated cooling capacity", "kW"),
-            "pump": ("p_rated", "Total rated pump power", "kW"),
-            "cooling_tower": ("p_rated_unit", "Total rated fan power", "kW"),
-        }.get(device_type)
-        if metric:
-            key, label, unit = metric
-            values = [
-                parameter.value
-                for member in members
-                for parameter in state_by_id[str(member.get("id"))].parameters
-                if parameter.key == key and parameter.value is not None
-            ]
-            if len(values) == len(members):
-                derived.append(
-                    EngineeringDerivedValue(key=key, label=label, value=sum(values), unit=unit)
-                )
+        grouped_node_ids.update(member.node_id for member in members)
+        result.append(_model_group(group_id, _label(group), members))
+
+    for node_state in node_states:
+        if node_state.node_id in grouped_node_ids:
+            continue
         result.append(
-            EngineeringModelGroup(
-                group_id=group_id,
-                label=_label(group),
-                device_type=device_type,
-                member_node_ids=[str(member.get("id")) for member in members],
-                member_labels=[_label(member) for member in members],
-                complete=all(state_by_id[str(member.get("id"))].complete for member in members),
-                derived_values=derived,
+            _model_group(
+                f"standalone:{node_state.node_id}",
+                node_state.label,
+                [node_state],
             )
         )
-    return sorted(result, key=lambda item: item.label.casefold())
+    return sorted(result, key=lambda item: (item.label.casefold(), item.group_id))
 
 
 def _pump_system(node: Document) -> str | None:

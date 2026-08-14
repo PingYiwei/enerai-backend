@@ -73,15 +73,26 @@ def test_group_derivation_aggregates_node_engineering_parameters() -> None:
                 "q_cool_rated": 1_200,
             },
         ),
+        _node(
+            "ch-3",
+            "chiller",
+            "CH-3",
+            parameters={
+                "q_cool_rated": 800,
+            },
+        ),
     ]
 
     node_states = _node_states(nodes, [schema])
     groups = _model_groups(nodes, node_states)
 
-    assert len(groups) == 1
-    assert groups[0].member_node_ids == ["ch-1", "ch-2"]
-    assert groups[0].complete is True
-    assert groups[0].derived_values[0].value == pytest.approx(2_200)
+    assert len(groups) == 2
+    by_id = {group.group_id: group for group in groups}
+    assert by_id["group-a"].member_node_ids == ["ch-1", "ch-2"]
+    assert by_id["group-a"].complete is True
+    assert by_id["group-a"].derived_values[0].value == pytest.approx(2_200)
+    assert by_id["standalone:ch-3"].member_node_ids == ["ch-3"]
+    assert by_id["standalone:ch-3"].derived_values[0].value == pytest.approx(800)
     assert node_states[0].parameters[0].label == "Rated cooling capacity"
 
 
