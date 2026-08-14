@@ -1,9 +1,9 @@
 import pytest
 
 from app.modules.optimizer.engineering import (
-    _equipment_states,
     _json_object,
     _model_groups,
+    _node_states,
     _physical_properties,
     _water_system_values,
     infer_topologies,
@@ -38,7 +38,7 @@ def _edge(source: str, target: str) -> dict[str, str]:
     return {"id": f"{source}-{target}", "source": source, "target": target}
 
 
-def test_group_derivation_aggregates_equipment_engineering_parameters() -> None:
+def test_group_derivation_aggregates_node_engineering_parameters() -> None:
     schema = EngineeringParameterSchema(
         device_type="chiller",
         label="Chiller",
@@ -47,6 +47,7 @@ def test_group_derivation_aggregates_equipment_engineering_parameters() -> None:
             EngineeringParameterDefinition(
                 key="q_cool_rated",
                 label="Rated cooling capacity",
+                label_zh="额定制冷量",
                 unit="kW",
                 required=True,
             )
@@ -74,13 +75,14 @@ def test_group_derivation_aggregates_equipment_engineering_parameters() -> None:
         ),
     ]
 
-    equipment = _equipment_states(nodes, [schema])
-    groups = _model_groups(nodes, equipment)
+    node_states = _node_states(nodes, [schema])
+    groups = _model_groups(nodes, node_states)
 
     assert len(groups) == 1
     assert groups[0].member_node_ids == ["ch-1", "ch-2"]
     assert groups[0].complete is True
     assert groups[0].derived_values[0].value == pytest.approx(2_200)
+    assert node_states[0].parameters[0].label == "Rated cooling capacity"
 
 
 def test_topology_derivation_distinguishes_dedicated_and_shared_networks() -> None:

@@ -125,7 +125,7 @@ class EngineeringParameterValue(BaseModel):
     maximum: float | None = None
 
 
-class EquipmentEngineeringParameter(BaseModel):
+class NodeEngineeringParameter(BaseModel):
     key: str
     label: str
     unit: str
@@ -133,7 +133,7 @@ class EquipmentEngineeringParameter(BaseModel):
     required: bool = False
 
 
-class EquipmentEngineeringState(BaseModel):
+class NodeEngineeringState(BaseModel):
     node_id: str
     label: str
     device_type: str
@@ -142,7 +142,7 @@ class EquipmentEngineeringState(BaseModel):
     configured_count: int
     required_count: int
     complete: bool
-    parameters: list[EquipmentEngineeringParameter]
+    parameters: list[NodeEngineeringParameter]
 
 
 class EngineeringDerivedValue(BaseModel):
@@ -190,7 +190,7 @@ class EngineeringConfigView(BaseModel):
     graph_revision: int
     physical_properties: list[EngineeringParameterValue]
     water_system_parameters: list[EngineeringParameterValue]
-    equipment: list[EquipmentEngineeringState]
+    nodes: list[NodeEngineeringState]
     model_groups: list[EngineeringModelGroup]
     topologies: list[EngineeringTopology]
     updated_at: datetime | None = None

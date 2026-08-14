@@ -27,8 +27,8 @@ from app.modules.optimizer.schemas import (
     EngineeringTopology,
     EngineeringTopologyConnection,
     EngineeringTopologyInference,
-    EquipmentEngineeringParameter,
-    EquipmentEngineeringState,
+    NodeEngineeringParameter,
+    NodeEngineeringState,
 )
 from app.modules.projects.data import owned_project, project_rdf
 from app.modules.studio.schemas import EngineeringParameterSchema
@@ -160,27 +160,27 @@ def _node_group_map(nodes: list[Document]) -> dict[str, str]:
     return result
 
 
-def _equipment_states(
+def _node_states(
     nodes: list[Document], schemas: list[EngineeringParameterSchema]
-) -> list[EquipmentEngineeringState]:
+) -> list[NodeEngineeringState]:
     schemas_by_type = {schema.device_type: schema for schema in schemas}
     nodes_by_id = {str(node.get("id")): node for node in nodes}
     group_by_node = _node_group_map(nodes)
-    states: list[EquipmentEngineeringState] = []
+    states: list[NodeEngineeringState] = []
     for node in nodes:
         if node.get("type") == "group":
             continue
         node_id = str(node.get("id") or "")
-        device_type = str(node.get("type") or "equipment")
+        device_type = str(node.get("type") or "node")
         schema = schemas_by_type.get(device_type)
         if schema is None:
             continue
         values = _data(node).get("engineering_parameters")
         configured = values if isinstance(values, dict) else {}
         parameters = [
-            EquipmentEngineeringParameter(
+            NodeEngineeringParameter(
                 key=definition.key,
-                label=definition.label_zh or definition.label,
+                label=definition.label,
                 unit=definition.unit,
                 value=_numeric(configured.get(definition.key)),
                 required=definition.required,
@@ -190,7 +190,7 @@ def _equipment_states(
         required = [parameter for parameter in parameters if parameter.required]
         group_id = group_by_node.get(node_id)
         states.append(
-            EquipmentEngineeringState(
+            NodeEngineeringState(
                 node_id=node_id,
                 label=_label(node),
                 device_type=device_type,
@@ -234,9 +234,9 @@ def _group_members(group_id: str, nodes: list[Document]) -> list[Document]:
 
 
 def _model_groups(
-    nodes: list[Document], equipment: list[EquipmentEngineeringState]
+    nodes: list[Document], node_states: list[NodeEngineeringState]
 ) -> list[EngineeringModelGroup]:
-    state_by_id = {item.node_id: item for item in equipment}
+    state_by_id = {item.node_id: item for item in node_states}
     result: list[EngineeringModelGroup] = []
     for group in nodes:
         if group.get("type") != "group":
@@ -249,7 +249,7 @@ def _model_groups(
         ]
         if not members:
             continue
-        device_types = {str(member.get("type") or "equipment") for member in members}
+        device_types = {str(member.get("type") or "node") for member in members}
         device_type = next(iter(device_types)) if len(device_types) == 1 else "mixed"
         derived: list[EngineeringDerivedValue] = []
         metric = {
@@ -472,7 +472,7 @@ async def engineering_config(
     nodes = [item for item in project.get("nodes", []) if isinstance(item, dict)]
     edges = [item for item in project.get("edges", []) if isinstance(item, dict)]
     schemas = await _engineering_schemas(database)
-    equipment = _equipment_states(nodes, schemas)
+    node_states = _node_states(nodes, schemas)
     raw_config = project.get("optimizer_engineering_config")
     config = raw_config if isinstance(raw_config, dict) else {}
     water = config.get("water_system_parameters")
@@ -483,8 +483,8 @@ async def engineering_config(
         graph_revision=int(project.get("graph_revision", 0)),
         physical_properties=_physical_properties(),
         water_system_parameters=_water_system_values(saved_water),
-        equipment=equipment,
-        model_groups=_model_groups(nodes, equipment),
+        nodes=node_states,
+        model_groups=_model_groups(nodes, node_states),
         topologies=_apply_topology_overrides(inferred, config),
         updated_at=config.get("updated_at"),
     )
@@ -636,8 +636,8 @@ async def infer_topologies_with_llm(
             '"mode":"one_to_one|parallel|mixed|unknown","confidence":0.0,'
             '"reason":"short evidence-based explanation"}]}. '
             "Return exactly one item for each system. Treat brick:feed/isFedBy as "
-            "directed equipment relationships and brick:hasPart/isPartOf as grouping. "
-            "Do not invent equipment or links."
+            "directed node relationships and brick:hasPart/isPartOf as grouping. "
+            "Do not invent nodes or links."
         ),
         messages=(
             Message(
