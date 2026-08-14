@@ -35,6 +35,7 @@ async def _owned_project(
 
 def _summary(document: Document) -> DatasetSummary:
     payload = dict(document)
+    payload["id"] = str(payload["_id"])
     payload.setdefault("description", "")
     payload.setdefault("file_size", 0)
     payload.setdefault(

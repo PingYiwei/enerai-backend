@@ -29,6 +29,7 @@ Document = dict[str, Any]
 
 def _summary(document: Document) -> ModelSummary:
     payload = dict(document)
+    payload["id"] = str(payload["_id"])
     payload.setdefault("description", "")
     payload.setdefault("dataset_name", "")
     payload.setdefault("usage_number", 0)
