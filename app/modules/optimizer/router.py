@@ -4,14 +4,25 @@ from urllib.parse import quote
 from fastapi import APIRouter, File, Form, Query, Response, UploadFile, status
 
 from app.api.dependencies import CurrentPrincipal, Database
-from app.modules.optimizer.models import create_model, delete_model, list_models, preview_model
+from app.modules.optimizer.dataset_configs import DATASET_CONFIGS
+from app.modules.optimizer.models import (
+    create_model,
+    delete_model,
+    list_models,
+    predict_model_outputs,
+    preview_model,
+)
 from app.modules.optimizer.schemas import (
     DatasetList,
     DatasetPreview,
     DatasetSummary,
     DeviceType,
+    DeviceTypeList,
+    DeviceTypeOption,
     ModelCreate,
     ModelList,
+    ModelPredictRequest,
+    ModelPredictResponse,
     ModelPreview,
     ModelSummary,
 )
@@ -34,8 +45,25 @@ async def upload_dataset(
     name: Annotated[str, Form(min_length=1, max_length=120)],
     device_type: Annotated[DeviceType, Form()],
     file: Annotated[UploadFile, File()],
+    description: Annotated[str, Form(max_length=300)] = "",
 ) -> DatasetSummary:
-    return await create_dataset(database, principal, project_id, name, device_type, file)
+    return await create_dataset(
+        database, principal, project_id, name, description, device_type, file
+    )
+
+
+@router.get("/datasets/device-types", response_model=DeviceTypeList)
+async def dataset_device_types(_principal: CurrentPrincipal) -> DeviceTypeList:
+    return DeviceTypeList(
+        items=[
+            DeviceTypeOption(
+                value=config.device_type,
+                label=config.label,
+                fields=list(config.fields),
+            )
+            for config in DATASET_CONFIGS.values()
+        ]
+    )
 
 
 @router.get("/datasets", response_model=DatasetList)
@@ -107,6 +135,19 @@ async def model_preview(
     principal: CurrentPrincipal,
 ) -> ModelPreview:
     return await preview_model(database, principal, project_id, model_id)
+
+
+@router.post("/models/{model_id}/predict", response_model=ModelPredictResponse)
+async def model_predict(
+    project_id: str,
+    model_id: str,
+    body: ModelPredictRequest,
+    database: Database,
+    principal: CurrentPrincipal,
+) -> ModelPredictResponse:
+    return await predict_model_outputs(
+        database, principal, project_id, model_id, body.inputs
+    )
 
 
 @router.delete("/models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -17,7 +17,7 @@ from app.modules.optimizer.schemas import (
     DatasetSummary,
     DeviceType,
 )
-from app.modules.optimizer.validation import decode_csv, validate_dataset
+from app.modules.optimizer.validation import count_valid_rows, decode_csv, validate_dataset
 
 Document = dict[str, Any]
 MAX_DATASET_BYTES = 20 * 1024 * 1024
@@ -34,7 +34,14 @@ async def _owned_project(
 
 
 def _summary(document: Document) -> DatasetSummary:
-    return DatasetSummary.model_validate(document)
+    payload = dict(document)
+    payload.setdefault("description", "")
+    payload.setdefault("file_size", 0)
+    payload.setdefault(
+        "valid_row_count",
+        int(payload.get("row_count", 0)) if payload.get("status") == "valid" else 0,
+    )
+    return DatasetSummary.model_validate(payload)
 
 
 async def create_dataset(
@@ -42,6 +49,7 @@ async def create_dataset(
     principal: Principal,
     project_id: str,
     name: str,
+    description: str,
     device_type: DeviceType,
     file: UploadFile,
 ) -> DatasetSummary:
@@ -59,6 +67,7 @@ async def create_dataset(
     except ValueError as error:
         raise AppError("invalid_csv", str(error), status_code=422) from error
     validation = validate_dataset(device_type, columns, rows)
+    valid_row_count = count_valid_rows(device_type, columns, rows)
     now = datetime.now(UTC)
     dataset_id = new_id("dts")
     bucket = AsyncGridFSBucket(database, bucket_name="optimizer_files")
@@ -76,10 +85,17 @@ async def create_dataset(
         "project_id": project_id,
         "owner_id": principal.user_id,
         "name": name.strip(),
+        "description": description.strip(),
         "filename": filename,
         "device_type": device_type,
-        "status": "valid" if all(rule.passed for rule in validation) else "invalid",
+        "status": (
+            "valid"
+            if all(rule.passed for rule in validation if rule.severity == "error")
+            else "invalid"
+        ),
         "row_count": len(rows),
+        "valid_row_count": valid_row_count,
+        "file_size": len(content),
         "columns": columns,
         "validation": [rule.model_dump(mode="json") for rule in validation],
         "file_id": file_id,
@@ -138,6 +154,8 @@ async def preview_dataset(
             for row in selected
         ],
         total=int(document["row_count"]),
+        offset=offset,
+        limit=limit,
     )
 
 
