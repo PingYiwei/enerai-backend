@@ -1,0 +1,76 @@
+{
+  "_id": "cooling_tower",
+  "device_type": "cooling_tower",
+  "label": "Cooling tower",
+  "label_zh": "冷却塔",
+  "version": 1,
+  "sort_order": 30,
+  "parameters": [
+    {
+      "key": "airflow_rated_unit",
+      "label": "Rated airflow per tower",
+      "label_zh": "单塔额定风量",
+      "description": "Rated airflow of one cooling-tower unit.",
+      "unit": "m³/h",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Rated performance",
+      "sort_order": 10
+    },
+    {
+      "key": "p_rated_unit",
+      "label": "Rated power per tower",
+      "label_zh": "单塔额定功率",
+      "description": "Rated fan input power of one cooling-tower unit.",
+      "unit": "kW",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Rated performance",
+      "sort_order": 20
+    },
+    {
+      "key": "freq_rated",
+      "label": "Rated frequency",
+      "label_zh": "额定频率",
+      "description": "Fan frequency corresponding to rated airflow and power.",
+      "unit": "Hz",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Frequency limits",
+      "sort_order": 30
+    },
+    {
+      "key": "freq_min",
+      "label": "Minimum operating frequency",
+      "label_zh": "最小运行频率",
+      "description": "Minimum fan frequency allowed in optimization candidates.",
+      "unit": "Hz",
+      "value_type": "number",
+      "required": true,
+      "minimum": 0,
+      "less_than_or_equal_to": "freq_max",
+      "precision": 2,
+      "group": "Frequency limits",
+      "sort_order": 40
+    },
+    {
+      "key": "freq_max",
+      "label": "Maximum operating frequency",
+      "label_zh": "最大运行频率",
+      "description": "Maximum fan frequency allowed in optimization candidates.",
+      "unit": "Hz",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Frequency limits",
+      "sort_order": 50
+    }
+  ]
+}

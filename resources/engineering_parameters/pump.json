@@ -1,0 +1,89 @@
+{
+  "_id": "pump",
+  "device_type": "pump",
+  "label": "Pump",
+  "label_zh": "水泵",
+  "version": 1,
+  "sort_order": 20,
+  "parameters": [
+    {
+      "key": "flow_rated",
+      "label": "Rated flow",
+      "label_zh": "额定流量",
+      "description": "Rated water flow. The optimizer adapter converts this value to m³/s when required by the pump solver.",
+      "unit": "m³/h",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Rated performance",
+      "sort_order": 10
+    },
+    {
+      "key": "head_rated",
+      "label": "Rated head",
+      "label_zh": "额定扬程",
+      "description": "Rated pump differential pressure in the project master-data unit.",
+      "unit": "MPa",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 4,
+      "group": "Rated performance",
+      "sort_order": 20
+    },
+    {
+      "key": "p_rated",
+      "label": "Rated power",
+      "label_zh": "额定功率",
+      "description": "Rated electrical input power.",
+      "unit": "kW",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Rated performance",
+      "sort_order": 30
+    },
+    {
+      "key": "freq_rated",
+      "label": "Rated frequency",
+      "label_zh": "额定频率",
+      "description": "Frequency corresponding to the rated pump curve and power.",
+      "unit": "Hz",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Frequency limits",
+      "sort_order": 40
+    },
+    {
+      "key": "freq_min",
+      "label": "Minimum operating frequency",
+      "label_zh": "最小运行频率",
+      "description": "Minimum frequency allowed in optimization candidates.",
+      "unit": "Hz",
+      "value_type": "number",
+      "required": true,
+      "minimum": 0,
+      "less_than_or_equal_to": "freq_max",
+      "precision": 2,
+      "group": "Frequency limits",
+      "sort_order": 50
+    },
+    {
+      "key": "freq_max",
+      "label": "Maximum operating frequency",
+      "label_zh": "最大运行频率",
+      "description": "Maximum frequency allowed in optimization candidates.",
+      "unit": "Hz",
+      "value_type": "number",
+      "required": true,
+      "exclusive_minimum": 0,
+      "precision": 2,
+      "group": "Frequency limits",
+      "sort_order": 60
+    }
+  ]
+}

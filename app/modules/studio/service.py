@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from pymongo import ReturnDocument
 from pymongo.asynchronous.database import AsyncDatabase
 
@@ -12,6 +14,9 @@ from app.modules.studio.schemas import (
     CatalogItem,
     CategoryGroup,
     CategoryOption,
+    EngineeringParameterCatalog,
+    EngineeringParameterSchema,
+    GraphNode,
     StudioCatalog,
     StudioCategories,
     StudioGraph,
@@ -127,6 +132,129 @@ async def get_categories(
     )
 
 
+def _engineering_schema(document: Document) -> EngineeringParameterSchema:
+    payload = {
+        "device_type": document.get("device_type") or document.get("_id"),
+        "label": document.get("label"),
+        "label_zh": document.get("label_zh"),
+        "version": document.get("version", 1),
+        "sort_order": document.get("sort_order", 0),
+        "parameters": document.get("parameters", []),
+    }
+    try:
+        schema = EngineeringParameterSchema.model_validate(payload)
+    except ValidationError as error:
+        raise AppError(
+            "engineering_parameter_catalog_invalid",
+            "An engineering parameter schema in the database is invalid",
+            status_code=500,
+            details={"device_type": str(payload["device_type"] or "")},
+        ) from error
+    schema.parameters.sort(key=lambda parameter: (parameter.sort_order, parameter.key))
+    return schema
+
+
+async def _engineering_schemas(
+    database: AsyncDatabase[Document],
+) -> list[EngineeringParameterSchema]:
+    documents = await database.engineering_parameter_schemas.find({}).to_list(None)
+    return sorted(
+        (_engineering_schema(document) for document in documents),
+        key=lambda schema: (schema.sort_order, schema.device_type),
+    )
+
+
+async def get_engineering_parameter_catalog(
+    database: AsyncDatabase[Document], principal: Principal, project_id: str
+) -> EngineeringParameterCatalog:
+    project = await database.projects.find_one(
+        {"_id": project_id, "owner_id": principal.user_id}, {"_id": 1}
+    )
+    if project is None:
+        raise AppError("project_not_found", "Project was not found", status_code=404)
+    return EngineeringParameterCatalog(items=await _engineering_schemas(database))
+
+
+def validate_engineering_parameters(
+    nodes: list[GraphNode], schemas: list[EngineeringParameterSchema]
+) -> None:
+    schemas_by_type = {schema.device_type: schema for schema in schemas}
+    invalid_nodes: list[dict[str, Any]] = []
+
+    for node in nodes:
+        raw_values = node.data.get("engineering_parameters")
+        if raw_values is None or raw_values == {}:
+            continue
+        if not isinstance(raw_values, dict):
+            invalid_nodes.append(
+                {"node_id": node.id, "issues": ["Engineering parameters must be an object"]}
+            )
+            continue
+
+        schema = schemas_by_type.get(node.type)
+        if schema is None:
+            invalid_nodes.append(
+                {
+                    "node_id": node.id,
+                    "issues": [f"No engineering parameter schema exists for {node.type}"],
+                }
+            )
+            continue
+
+        definitions = {parameter.key: parameter for parameter in schema.parameters}
+        issues: list[str] = []
+        unknown_fields = sorted(set(raw_values) - set(definitions))
+        if unknown_fields:
+            issues.append(f"Unknown fields: {', '.join(unknown_fields)}")
+
+        numeric_values: dict[str, float] = {}
+        for parameter in schema.parameters:
+            value = raw_values.get(parameter.key)
+            if value is None:
+                if parameter.required:
+                    issues.append(f"{parameter.key} is required")
+                continue
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                issues.append(f"{parameter.key} must be a number")
+                continue
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                issues.append(f"{parameter.key} must be finite")
+                continue
+            numeric_values[parameter.key] = numeric
+            if parameter.minimum is not None and numeric < parameter.minimum:
+                issues.append(f"{parameter.key} must be at least {parameter.minimum:g}")
+            if parameter.maximum is not None and numeric > parameter.maximum:
+                issues.append(f"{parameter.key} must be at most {parameter.maximum:g}")
+            if parameter.exclusive_minimum is not None and numeric <= parameter.exclusive_minimum:
+                issues.append(
+                    f"{parameter.key} must be greater than {parameter.exclusive_minimum:g}"
+                )
+            if parameter.exclusive_maximum is not None and numeric >= parameter.exclusive_maximum:
+                issues.append(f"{parameter.key} must be less than {parameter.exclusive_maximum:g}")
+
+        for parameter in schema.parameters:
+            other_key = parameter.less_than_or_equal_to
+            if (
+                other_key
+                and parameter.key in numeric_values
+                and other_key in numeric_values
+                and numeric_values[parameter.key] > numeric_values[other_key]
+            ):
+                issues.append(f"{parameter.key} must not exceed {other_key}")
+
+        if issues:
+            invalid_nodes.append({"node_id": node.id, "issues": issues})
+
+    if invalid_nodes:
+        raise AppError(
+            "engineering_parameters_invalid",
+            "One or more nodes have invalid engineering parameters",
+            status_code=422,
+            details={"nodes": invalid_nodes},
+        )
+
+
 def validate_graph(request: StudioGraphUpdate) -> None:
     node_ids = [node.id for node in request.nodes]
     edge_ids = [edge.id for edge in request.edges]
@@ -238,6 +366,8 @@ async def save_graph(
     request: StudioGraphUpdate,
 ) -> StudioGraph:
     validate_graph(request)
+    if any("engineering_parameters" in node.data for node in request.nodes):
+        validate_engineering_parameters(request.nodes, await _engineering_schemas(database))
     now = datetime.now(UTC)
     next_revision = request.revision + 1
     nodes = [node.model_dump(mode="json") for node in request.nodes]

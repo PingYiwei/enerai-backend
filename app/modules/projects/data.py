@@ -675,14 +675,9 @@ def project_rdf(project: Document) -> str:
         if grade not in {"S", "A", "B", "C"}:
             grade = "B"
         add(node_ref, "enerai:inspectionGrade", f'"{grade}"')
-        add(
-            node_ref,
-            "enerai:inspectionEnabled",
-            '"false"' if inspection.get("enabled") is False else '"true"',
-        )
-        description = data.get("description") or data.get("note")
-        if description:
-            add(node_ref, "rdfs:comment", f'"{_turtle(description)}"')
+        comments = [data.get("description") or data.get("note"), data.get("modeling_note")]
+        for comment in dict.fromkeys(str(item).strip() for item in comments if item):
+            add(node_ref, "rdfs:comment", f'"{_turtle(comment)}"')
         for sensor in data.get("sensors", []):
             if not isinstance(sensor, dict):
                 continue

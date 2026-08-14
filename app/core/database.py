@@ -50,6 +50,9 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
     await database.studio_graph_versions.create_indexes(
         [IndexModel([("project_id", ASCENDING), ("revision", ASCENDING)], unique=True)]
     )
+    await database.engineering_parameter_schemas.create_indexes(
+        [IndexModel([("device_type", ASCENDING)], unique=True)]
+    )
     await database.agent_lanes.create_indexes(
         [IndexModel([("session_id", ASCENDING), ("name", ASCENDING)], unique=True)]
     )
@@ -135,9 +138,7 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
     await database.inspection_node_results.create_indexes(
         [
             IndexModel([("run_id", ASCENDING), ("node_id", ASCENDING)], unique=True),
-            IndexModel(
-                [("owner_id", ASCENDING), ("project_id", ASCENDING), ("status", ASCENDING)]
-            ),
+            IndexModel([("owner_id", ASCENDING), ("project_id", ASCENDING), ("status", ASCENDING)]),
         ]
     )
     await database.datasets.create_indexes(

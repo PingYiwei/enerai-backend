@@ -2,12 +2,19 @@ from fastapi import APIRouter
 
 from app.api.dependencies import CurrentPrincipal, Database
 from app.modules.studio.schemas import (
+    EngineeringParameterCatalog,
     StudioCatalog,
     StudioCategories,
     StudioGraph,
     StudioGraphUpdate,
 )
-from app.modules.studio.service import CATALOG, get_categories, get_graph, save_graph
+from app.modules.studio.service import (
+    CATALOG,
+    get_categories,
+    get_engineering_parameter_catalog,
+    get_graph,
+    save_graph,
+)
 
 router = APIRouter()
 
@@ -24,6 +31,15 @@ async def categories(
     principal: CurrentPrincipal,
 ) -> StudioCategories:
     return await get_categories(database, principal, project_id)
+
+
+@router.get("/engineering-parameters", response_model=EngineeringParameterCatalog)
+async def engineering_parameters(
+    project_id: str,
+    database: Database,
+    principal: CurrentPrincipal,
+) -> EngineeringParameterCatalog:
+    return await get_engineering_parameter_catalog(database, principal, project_id)
 
 
 @router.get("/graph", response_model=StudioGraph)

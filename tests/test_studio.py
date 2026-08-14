@@ -1,9 +1,25 @@
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from app.core.errors import AppError
-from app.modules.studio.schemas import GraphEdge, GraphNode, StudioGraphUpdate
-from app.modules.studio.service import _normalize_categories, validate_graph
+from app.modules.studio.schemas import (
+    EngineeringParameterDefinition,
+    EngineeringParameterSchema,
+    GraphEdge,
+    GraphNode,
+    StudioGraphUpdate,
+)
+from app.modules.studio.service import (
+    _engineering_schema,
+    _normalize_categories,
+    validate_engineering_parameters,
+    validate_graph,
+)
+
+RESOURCE_ROOT = Path(__file__).parents[1] / "resources" / "engineering_parameters"
 
 
 def node(node_id: str, parent_id: str | None = None, node_type: str = "equipment") -> GraphNode:
@@ -122,3 +138,107 @@ def test_equipment_inspection_grade_defaults_to_b_and_is_validated() -> None:
             position={"x": 0, "y": 0},
             data={"inspection": {"grade": "D"}},
         )
+
+
+def test_engineering_parameters_follow_device_schema() -> None:
+    schema = EngineeringParameterSchema(
+        device_type="chiller",
+        label="Chiller",
+        version=1,
+        parameters=[
+            EngineeringParameterDefinition(
+                key="q_cool_rated",
+                label="Rated cooling capacity",
+                unit="kW",
+                required=True,
+                exclusive_minimum=0,
+            ),
+            EngineeringParameterDefinition(
+                key="load_pct_min",
+                label="Minimum load ratio",
+                unit="1",
+                required=True,
+                minimum=0,
+                maximum=1,
+                less_than_or_equal_to="load_pct_max",
+            ),
+            EngineeringParameterDefinition(
+                key="load_pct_max",
+                label="Maximum load ratio",
+                unit="1",
+                required=True,
+                minimum=0,
+                maximum=1,
+            ),
+        ],
+    )
+    equipment = GraphNode(
+        id="chiller-1",
+        type="chiller",
+        position={"x": 0, "y": 0},
+        data={
+            "engineering_parameters": {
+                "q_cool_rated": 1_200,
+                "load_pct_min": 0.2,
+                "load_pct_max": 1,
+            }
+        },
+    )
+
+    validate_engineering_parameters([equipment], [schema])
+
+
+def test_engineering_parameters_reject_missing_bounds_and_unknown_fields() -> None:
+    schema = EngineeringParameterSchema(
+        device_type="pump",
+        label="Pump",
+        version=1,
+        parameters=[
+            EngineeringParameterDefinition(
+                key="freq_min",
+                label="Minimum frequency",
+                unit="Hz",
+                required=True,
+                minimum=0,
+                less_than_or_equal_to="freq_max",
+            ),
+            EngineeringParameterDefinition(
+                key="freq_max",
+                label="Maximum frequency",
+                unit="Hz",
+                required=True,
+                exclusive_minimum=0,
+            ),
+        ],
+    )
+    equipment = GraphNode(
+        id="pump-1",
+        type="pump",
+        position={"x": 0, "y": 0},
+        data={
+            "engineering_parameters": {
+                "freq_min": 50,
+                "freq_max": 40,
+                "legacy_frequency": 45,
+            }
+        },
+    )
+
+    with pytest.raises(AppError) as error:
+        validate_engineering_parameters([equipment], [schema])
+
+    assert error.value.code == "engineering_parameters_invalid"
+    issues = error.value.details["nodes"][0]["issues"]
+    assert "Unknown fields: legacy_frequency" in issues
+    assert "freq_min must not exceed freq_max" in issues
+
+
+@pytest.mark.parametrize("device_type", ["chiller", "pump", "cooling_tower"])
+def test_engineering_parameter_resources_match_database_schema(device_type: str) -> None:
+    document = json.loads((RESOURCE_ROOT / f"{device_type}.json").read_text(encoding="utf-8"))
+
+    schema = _engineering_schema(document)
+
+    assert schema.device_type == device_type
+    assert schema.parameters
+    assert all(parameter.unit for parameter in schema.parameters)

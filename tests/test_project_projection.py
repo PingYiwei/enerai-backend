@@ -32,6 +32,7 @@ def project() -> dict[str, object]:
                     "label": "CH-1",
                     "root_category": "Chiller",
                     "category": "Centrifugal_Chiller",
+                    "modeling_note": "Primary chilled-water machine.",
                     "sensors": [
                         {
                             "id": "sensor-1",
@@ -116,6 +117,8 @@ def test_rdf_projection_escapes_labels_and_preserves_connections() -> None:
     assert "@prefix enerai: <https://enerai.ai/projects/Plant_%22A%22#>" in rdf
     assert 'enerai:project a brick:Building ;\n    rdfs:label "Plant \\"A\\"" .' in rdf
     assert "enerai:CH-1 a brick:Centrifugal_Chiller ;" in rdf
+    assert '    rdfs:comment "Primary chilled-water machine." ;' in rdf
+    assert "inspectionEnabled" not in rdf
     assert "    brick:hasPoint enerai:Supply_temperature ;" in rdf
     assert "enerai:Supply_temperature a brick:Temperature_Sensor ;" in rdf
     assert "    brick:isPointOf enerai:CH-1 ." in rdf
