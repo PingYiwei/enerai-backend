@@ -22,6 +22,7 @@ from app.modules.optimizer.schemas import (
     EngineeringConfigUpdate,
     EngineeringConfigView,
     EngineeringDerivedValue,
+    EngineeringModelBinding,
     EngineeringModelGroup,
     EngineeringParameterValue,
     EngineeringTopology,
@@ -500,6 +501,45 @@ async def engineering_config(
     water = config.get("water_system_parameters")
     saved_water = water if isinstance(water, dict) else {}
     inferred = infer_topologies(nodes, edges)
+    raw_bindings = config.get("model_bindings")
+    saved_bindings = raw_bindings if isinstance(raw_bindings, dict) else {}
+    model_ids = [str(value) for value in saved_bindings.values() if value]
+    models = await database.models.find(
+        {
+            "_id": {"$in": model_ids},
+            "project_id": project_id,
+            "owner_id": principal.user_id,
+        }
+    ).to_list(None) if model_ids else []
+    models_by_id = {str(item.get("_id")): item for item in models}
+    node_type_by_id = {str(item.get("id")): str(item.get("type")) for item in nodes}
+    bindings: list[EngineeringModelBinding] = []
+    for node_id, raw_model_id in saved_bindings.items():
+        model_id = str(raw_model_id)
+        model = models_by_id.get(model_id)
+        expected_type = node_type_by_id.get(str(node_id), "")
+        if model is None:
+            status = "missing"
+            model_name = "Missing model"
+            known_type = (
+                expected_type
+                if expected_type in {"chiller", "pump", "cooling_tower"}
+                else "pump"
+            )
+            device_type = cast(Any, known_type)
+        else:
+            device_type = cast(Any, model.get("device_type"))
+            status = "ready" if str(model.get("device_type")) == expected_type else "incompatible"
+            model_name = str(model.get("name") or model_id)
+        bindings.append(
+            EngineeringModelBinding(
+                node_id=str(node_id),
+                model_id=model_id,
+                model_name=model_name,
+                device_type=device_type,
+                status=cast(Any, status),
+            )
+        )
     return EngineeringConfigView(
         project_id=project_id,
         graph_revision=int(project.get("graph_revision", 0)),
@@ -507,6 +547,7 @@ async def engineering_config(
         water_system_parameters=_water_system_values(saved_water),
         nodes=node_states,
         model_groups=_model_groups(nodes, node_states),
+        model_bindings=sorted(bindings, key=lambda item: item.node_id),
         topologies=_apply_topology_overrides(inferred, config),
         updated_at=config.get("updated_at"),
     )
@@ -555,6 +596,49 @@ async def update_engineering_config(
     body: EngineeringConfigUpdate,
 ) -> EngineeringConfigView:
     water = _validated_water_values(body.water_system_parameters)
+    current_project = await owned_project(database, principal, project_id)
+    supported_nodes = {
+        str(item.get("id")): str(item.get("type"))
+        for item in current_project.get("nodes", [])
+        if isinstance(item, dict) and item.get("type") in {"chiller", "pump", "cooling_tower"}
+    }
+    unknown_nodes = sorted(set(body.model_bindings) - set(supported_nodes))
+    if unknown_nodes:
+        raise AppError(
+            "engineering_model_binding_node_unknown",
+            "Model bindings reference unknown optimizer nodes",
+            status_code=422,
+            details={"node_ids": unknown_nodes},
+        )
+    model_ids = list(set(body.model_bindings.values()))
+    models = await database.models.find(
+        {
+            "_id": {"$in": model_ids},
+            "project_id": project_id,
+            "owner_id": principal.user_id,
+        }
+    ).to_list(None) if model_ids else []
+    models_by_id = {str(item.get("_id")): item for item in models}
+    missing_models = sorted(set(model_ids) - set(models_by_id))
+    if missing_models:
+        raise AppError(
+            "engineering_model_binding_model_missing",
+            "One or more bound performance models do not exist",
+            status_code=422,
+            details={"model_ids": missing_models},
+        )
+    incompatible = [
+        node_id
+        for node_id, model_id in body.model_bindings.items()
+        if str(models_by_id[model_id].get("device_type")) != supported_nodes[node_id]
+    ]
+    if incompatible:
+        raise AppError(
+            "engineering_model_binding_incompatible",
+            "A performance model must match the bound node device type",
+            status_code=422,
+            details={"node_ids": sorted(incompatible)},
+        )
     topology_systems = [item.system for item in body.topologies]
     if len(topology_systems) != len(set(topology_systems)):
         raise AppError(
@@ -566,6 +650,7 @@ async def update_engineering_config(
     config = {
         "graph_revision": body.graph_revision,
         "water_system_parameters": water,
+        "model_bindings": body.model_bindings,
         "topologies": {
             item.system: item.model_dump(mode="json", exclude={"system"})
             for item in body.topologies

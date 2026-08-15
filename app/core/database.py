@@ -155,6 +155,21 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
             )
         ]
     )
+    await database.optimization_strategies.create_indexes(
+        [
+            IndexModel(
+                [("owner_id", ASCENDING), ("project_id", ASCENDING), ("updated_at", DESCENDING)]
+            )
+        ]
+    )
+    await database.optimization_runs.create_indexes(
+        [
+            IndexModel(
+                [("owner_id", ASCENDING), ("project_id", ASCENDING), ("created_at", DESCENDING)]
+            ),
+            IndexModel([("strategy_id", ASCENDING), ("status", ASCENDING)]),
+        ]
+    )
 
 
 @asynccontextmanager

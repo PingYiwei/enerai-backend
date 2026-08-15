@@ -34,6 +34,11 @@ from app.modules.optimizer.schemas import (
     ModelPredictResponse,
     ModelPreview,
     ModelSummary,
+    OptimizationPreflightResult,
+    OptimizationRunView,
+    OptimizationStrategyCreate,
+    OptimizationStrategyList,
+    OptimizationStrategySummary,
 )
 from app.modules.optimizer.service import (
     create_dataset,
@@ -42,8 +47,84 @@ from app.modules.optimizer.service import (
     preview_dataset,
     read_dataset_file,
 )
+from app.modules.optimizer.strategies import (
+    create_strategy,
+    delete_strategy,
+    latest_run,
+    list_strategies,
+    preflight_strategy,
+    read_run,
+    start_run,
+    update_strategy,
+)
 
 router = APIRouter()
+
+
+@router.post(
+    "/strategies", response_model=OptimizationStrategySummary, status_code=status.HTTP_201_CREATED
+)
+async def create_optimization_strategy(
+    project_id: str,
+    body: OptimizationStrategyCreate,
+    database: Database,
+    principal: CurrentPrincipal,
+) -> OptimizationStrategySummary:
+    return await create_strategy(database, principal, project_id, body)
+
+
+@router.get("/strategies", response_model=OptimizationStrategyList)
+async def optimization_strategies(
+    project_id: str, database: Database, principal: CurrentPrincipal
+) -> OptimizationStrategyList:
+    return await list_strategies(database, principal, project_id)
+
+
+@router.put("/strategies/{strategy_id}", response_model=OptimizationStrategySummary)
+async def save_optimization_strategy(
+    project_id: str,
+    strategy_id: str,
+    body: OptimizationStrategyCreate,
+    database: Database,
+    principal: CurrentPrincipal,
+) -> OptimizationStrategySummary:
+    return await update_strategy(database, principal, project_id, strategy_id, body)
+
+
+@router.delete("/strategies/{strategy_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def remove_optimization_strategy(
+    project_id: str, strategy_id: str, database: Database, principal: CurrentPrincipal
+) -> Response:
+    await delete_strategy(database, principal, project_id, strategy_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/strategies/{strategy_id}/preflight", response_model=OptimizationPreflightResult)
+async def preflight_optimization_strategy(
+    project_id: str, strategy_id: str, database: Database, principal: CurrentPrincipal
+) -> OptimizationPreflightResult:
+    return await preflight_strategy(database, principal, project_id, strategy_id)
+
+
+@router.post("/strategies/{strategy_id}/runs", response_model=OptimizationRunView)
+async def run_optimization_strategy(
+    project_id: str, strategy_id: str, database: Database, principal: CurrentPrincipal
+) -> OptimizationRunView:
+    return await start_run(database, principal, project_id, strategy_id)
+
+
+@router.get("/runs/latest", response_model=OptimizationRunView | None)
+async def latest_optimization_run(
+    project_id: str, database: Database, principal: CurrentPrincipal
+) -> OptimizationRunView | None:
+    return await latest_run(database, principal, project_id)
+
+
+@router.get("/runs/{run_id}", response_model=OptimizationRunView)
+async def optimization_run(
+    project_id: str, run_id: str, database: Database, principal: CurrentPrincipal
+) -> OptimizationRunView:
+    return await read_run(database, principal, project_id, run_id)
 
 
 @router.get("/engineering", response_model=EngineeringConfigView)
