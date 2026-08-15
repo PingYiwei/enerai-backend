@@ -37,7 +37,11 @@ def train(rows: list[dict[str, float]]) -> TrainingResult:
         target="air_water_ratio",
     )
     return TrainingResult(
-        artifact={"kind": "cooling_tower_polynomial", "coefficients": coefficients},
+        artifact={
+            "kind": "cooling_tower_polynomial",
+            "units": {"t_wb": "°C", "eta": "1", "air_water_ratio": "1"},
+            "coefficients": coefficients,
+        },
         series=[series],
         metrics=aggregate_metrics([series]),
     )

@@ -14,7 +14,7 @@ from app.core.errors import AppError
 from app.core.ids import new_id
 from app.core.security import Principal
 from app.modules.optimizer.engineering import _pump_system, engineering_config
-from app.modules.optimizer.modeling import predict_model
+from app.modules.optimizer.modeling import optimization_artifact_compatible, predict_model
 from app.modules.optimizer.schemas import (
     EngineeringConfigView,
     OptimizationPreflightIssue,
@@ -31,11 +31,6 @@ from app.modules.optimizer.schemas import (
 from app.modules.projects.data import owned_project
 
 Document = dict[str, Any]
-EXPECTED_ARTIFACT_KINDS = {
-    "chiller": "chiller_polynomial",
-    "pump": "pump_polynomial",
-    "cooling_tower": "cooling_tower_polynomial",
-}
 
 RUN_STAGES = (
     ("preflight", "Validate engineering inputs"),
@@ -213,9 +208,8 @@ def _model_is_optimization_compatible(model: Document, device_type: str) -> bool
     return (
         model.get("algorithm") == "polynomial"
         and isinstance(artifact, dict)
-        and artifact.get("kind") == EXPECTED_ARTIFACT_KINDS.get(device_type)
-        and isinstance(artifact.get("coefficients"), dict)
-        and bool(artifact["coefficients"])
+        and device_type in models_by_type()
+        and optimization_artifact_compatible(cast(Any, device_type), artifact)
     )
 
 
@@ -602,12 +596,16 @@ def _solve_chillers(
 
 
 def _solve_pump_system(
-    groups: list[Document], target_flow: float, resistance: float, topology: str, chiller_count: int
+    groups: list[Document],
+    target_flow: float,
+    resistance: float,
+    topology: str,
+    chiller_count: int,
+    rho_w: float,
 ) -> Document:
     if not groups or target_flow <= 0:
         raise ValueError("pump_group_unavailable")
     required_head_m = resistance * (target_flow / 3600) ** 2
-    required_pressure_mpa = required_head_m * 1000 * 9.80665 / 1_000_000
     best: Document | None = None
     for counts in itertools.product(*(range(group["available_count"] + 1) for group in groups)):
         total_count = sum(counts)
@@ -628,7 +626,7 @@ def _solve_pump_system(
             low = parameter["freq_min"] / parameter["freq_rated"]
             high = parameter["freq_max"] / parameter["freq_rated"]
 
-            def pressure(
+            def pump_head(
                 ratio: float,
                 bound_group: Document = group,
                 bound_unit_flow: float = unit_flow,
@@ -640,23 +638,25 @@ def _solve_pump_system(
                 )
                 return output["head"] * ratio**2, output["eff_pump"]
 
-            high_pressure, _ = pressure(high)
-            if high_pressure < required_pressure_mpa:
+            high_head, _ = pump_head(high)
+            if high_head < required_head_m:
                 feasible = False
                 break
             for _ in range(40):
                 middle = (low + high) / 2
-                middle_pressure, _ = pressure(middle)
-                if middle_pressure >= required_pressure_mpa:
+                middle_head, _ = pump_head(middle)
+                if middle_head >= required_head_m:
                     high = middle
                 else:
                     low = middle
             ratio = high
-            _, efficiency = pressure(ratio)
-            if not 0 < efficiency <= 1.2:
+            _, efficiency = pump_head(ratio)
+            if not 0 < efficiency <= 1:
                 feasible = False
                 break
-            unit_power = required_pressure_mpa * 1_000_000 * (unit_flow / 3600) / efficiency / 1000
+            unit_power = (
+                rho_w * 9.80665 * required_head_m * (unit_flow / 3600) / efficiency / 1000
+            )
             total_power += count * unit_power
             frequencies.extend([ratio * parameter["freq_rated"]] * count)
         if feasible and total_power > 0 and (best is None or total_power < best["power"]):
@@ -855,6 +855,7 @@ async def _execute_run(
                             water["coef_resistance_chw"],
                             topology["chilled_water_pumps"],
                             chiller_count,
+                            physical["rho_w"],
                         )
                         cwp = _solve_pump_system(
                             condenser_pumps,
@@ -862,6 +863,7 @@ async def _execute_run(
                             water["coef_resistance_cw"],
                             topology["condenser_water_pumps"],
                             chiller_count,
+                            physical["rho_w"],
                         )
                         towers = _solve_towers(
                             tower_groups,

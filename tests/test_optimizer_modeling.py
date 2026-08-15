@@ -1,6 +1,10 @@
 import pytest
 
-from app.modules.optimizer.modeling import predict_model, train_model
+from app.modules.optimizer.modeling import (
+    optimization_artifact_compatible,
+    predict_model,
+    train_model,
+)
 
 
 def pump_rows() -> list[dict[str, float]]:
@@ -21,6 +25,9 @@ def test_pump_model_trains_two_polynomial_submodels_and_predicts() -> None:
     outputs = predict_model("pump", result.artifact, {"flow": 10.0})
     assert outputs["eff_pump"] == pytest.approx(0.77)
     assert outputs["head"] == pytest.approx(100.0)
+    assert optimization_artifact_compatible("pump", result.artifact)
+    legacy_artifact = {key: value for key, value in result.artifact.items() if key != "units"}
+    assert not optimization_artifact_compatible("pump", legacy_artifact)
 
 
 def test_cooling_tower_model_uses_wet_bulb_and_efficiency() -> None:
@@ -53,7 +60,7 @@ def test_chiller_model_builds_submodels_and_chained_evaluations() -> None:
             "flow_cw": 720.0 + index * 9.0,
             "q_cool": 500.0 + index * 25.0,
             "q_reject": 620.0 + index * 29.0,
-            "load_pct": 35.0 + index * 2.0,
+            "load_pct": 0.35 + index * 0.02,
             "t_evap": 4.5 + index * 0.01,
             "t_cond": 36.0 + index * 0.03,
         }
@@ -69,3 +76,5 @@ def test_chiller_model_builds_submodels_and_chained_evaluations() -> None:
     outputs = predict_model("chiller", result.artifact, rows[10])
     assert outputs["cop"] > 0
     assert outputs["power"] > 0
+    assert result.artifact["units"]["load_pct"] == "1"
+    assert result.artifact["units"]["flow"] == "m³/h"

@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import math
 
-from app.modules.optimizer.dataset_configs.base import DatasetConfig, NumericRow, warning_rule
+from app.modules.optimizer.dataset_configs.base import (
+    DatasetConfig,
+    NumericRow,
+    error_rule,
+    warning_rule,
+)
 from app.modules.optimizer.schemas import ValidationRule
 
 FIELDS = (
@@ -46,6 +51,16 @@ def _minimum_difference(
 
 def validate_rules(rows: list[NumericRow]) -> list[ValidationRule]:
     return [
+        error_rule(
+            rule_id="chiller_load_ratio_unit",
+            name="Chiller load ratio",
+            constraint="0 < load_pct <= 1 (dimensionless ratio, not percent)",
+            invalid_rows=[
+                row_number
+                for row_number, values in rows
+                if not 0 < values["load_pct"] <= 1
+            ],
+        ),
         _minimum_difference(
             rows,
             rule_id="chiller_condensing_approach",
@@ -85,6 +100,20 @@ CONFIG = DatasetConfig(
     device_type="chiller",
     label="Chiller",
     fields=FIELDS,
+    field_units={
+        "time": "YYYY-MM-DD HH:mm:ss",
+        "t_chw_ret": "°C",
+        "t_chw_sup": "°C",
+        "t_cw_sup": "°C",
+        "t_cw_ret": "°C",
+        "flow_chw": "m³/h",
+        "flow_cw": "m³/h",
+        "q_cool": "kW",
+        "q_reject": "kW",
+        "load_pct": "1",
+        "t_evap": "°C",
+        "t_cond": "°C",
+    },
     validate_rules=validate_rules,
 )
 

@@ -18,6 +18,7 @@ from app.modules.auth.model_settings import (
     read_model_settings,
     resolve_provider_runtime,
 )
+from app.modules.optimizer.modeling import optimization_artifact_compatible
 from app.modules.optimizer.schemas import (
     EngineeringConfigUpdate,
     EngineeringConfigView,
@@ -130,6 +131,17 @@ def _numeric(value: Any) -> float | None:
         return None
     numeric = float(value)
     return numeric if math.isfinite(numeric) else None
+
+
+def _optimization_model_matches(model: Document, expected_type: str) -> bool:
+    artifact = model.get("artifact")
+    return (
+        str(model.get("device_type")) == expected_type
+        and model.get("algorithm") == "polynomial"
+        and isinstance(artifact, dict)
+        and expected_type in {"chiller", "pump", "cooling_tower"}
+        and optimization_artifact_compatible(cast(Any, expected_type), artifact)
+    )
 
 
 async def _engineering_schemas(
@@ -529,7 +541,8 @@ async def engineering_config(
             device_type = cast(Any, known_type)
         else:
             device_type = cast(Any, model.get("device_type"))
-            status = "ready" if str(model.get("device_type")) == expected_type else "incompatible"
+            compatible = _optimization_model_matches(model, expected_type)
+            status = "ready" if compatible else "incompatible"
             model_name = str(model.get("name") or model_id)
         bindings.append(
             EngineeringModelBinding(
@@ -630,7 +643,7 @@ async def update_engineering_config(
     incompatible = [
         node_id
         for node_id, model_id in body.model_bindings.items()
-        if str(models_by_id[model_id].get("device_type")) != supported_nodes[node_id]
+        if not _optimization_model_matches(models_by_id[model_id], supported_nodes[node_id])
     ]
     if incompatible:
         raise AppError(

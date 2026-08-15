@@ -11,7 +11,12 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.core.errors import AppError
 from app.core.ids import new_id
 from app.core.security import Principal
-from app.modules.optimizer.modeling import MODEL_FIELDS, predict_model, train_model
+from app.modules.optimizer.modeling import (
+    MODEL_FIELDS,
+    optimization_artifact_compatible,
+    predict_model,
+    train_model,
+)
 from app.modules.optimizer.schemas import (
     DeviceType,
     ModelCreate,
@@ -22,7 +27,7 @@ from app.modules.optimizer.schemas import (
     ModelSummary,
 )
 from app.modules.optimizer.service import owned_dataset, read_dataset_file
-from app.modules.optimizer.validation import decode_csv
+from app.modules.optimizer.validation import decode_csv, validate_dataset
 
 Document = dict[str, Any]
 
@@ -33,6 +38,13 @@ def _summary(document: Document) -> ModelSummary:
     payload.setdefault("description", "")
     payload.setdefault("dataset_name", "")
     payload.setdefault("usage_number", 0)
+    device_type = cast(DeviceType, payload.get("device_type"))
+    artifact = payload.get("artifact")
+    payload["optimization_compatible"] = (
+        isinstance(artifact, dict)
+        and device_type in MODEL_FIELDS
+        and optimization_artifact_compatible(device_type, artifact)
+    )
     return ModelSummary.model_validate(payload)
 
 
@@ -48,6 +60,17 @@ async def create_model(
     device_type = cast(DeviceType, dataset["device_type"])
     _, content = await read_dataset_file(database, principal, project_id, request.dataset_id)
     columns, raw_rows = decode_csv(content)
+    validation = validate_dataset(device_type, columns, raw_rows)
+    blocking_rules = [
+        rule for rule in validation if rule.severity == "error" and not rule.passed
+    ]
+    if blocking_rules:
+        raise AppError(
+            "dataset_unit_or_range_invalid",
+            "Dataset no longer satisfies the current model field, unit, or range rules",
+            status_code=422,
+            details={"validation": [rule.model_dump(mode="json") for rule in blocking_rules]},
+        )
     required_fields = MODEL_FIELDS[device_type]
     try:
         indexes = {name: columns.index(name) for name in required_fields}

@@ -179,6 +179,7 @@ async def dataset_device_types(_principal: CurrentPrincipal) -> DeviceTypeList:
                 value=config.device_type,
                 label=config.label,
                 fields=list(config.fields),
+                field_units=config.field_units,
             )
             for config in DATASET_CONFIGS.values()
         ]

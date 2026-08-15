@@ -23,6 +23,7 @@ class DeviceTypeOption(BaseModel):
     value: DeviceType
     label: str
     fields: list[str]
+    field_units: dict[str, str] = Field(default_factory=dict)
 
 
 class DeviceTypeList(BaseModel):
@@ -77,6 +78,7 @@ class ModelSummary(BaseModel):
     status: Literal["ready"]
     metrics: dict[str, float]
     usage_number: int = 0
+    optimization_compatible: bool = False
     created_at: datetime
 
 

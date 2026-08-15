@@ -222,7 +222,17 @@ def train(rows: list[dict[str, float]]) -> TrainingResult:
     ]
     series = [evaporator, condenser, compressor, *evaluations]
     return TrainingResult(
-        artifact={"kind": "chiller_polynomial", "coefficients": coefficients},
+        artifact={
+            "kind": "chiller_polynomial",
+            "units": {
+                "temperature": "°C",
+                "flow": "m³/h",
+                "thermal_power": "kW",
+                "load_pct": "1",
+                "cop": "1",
+            },
+            "coefficients": coefficients,
+        },
         series=series,
         metrics=aggregate_metrics(series),
     )

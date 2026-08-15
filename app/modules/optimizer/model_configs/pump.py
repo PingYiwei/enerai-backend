@@ -36,6 +36,7 @@ def train(rows: list[dict[str, float]]) -> TrainingResult:
     return TrainingResult(
         artifact={
             "kind": "pump_polynomial",
+            "units": {"flow": "m³/h", "eff_pump": "1", "head": "m"},
             "coefficients": {
                 "flow_efficiency": efficiency_coefficients,
                 "flow_head": head_coefficients,

@@ -7,6 +7,7 @@ from app.modules.optimizer.strategies import (
     _average_value,
     _chiller_combinations,
     _range_values,
+    _solve_pump_system,
     _supply_values,
 )
 
@@ -96,3 +97,36 @@ def test_second_chiller_combination_has_more_capacity_than_first() -> None:
         for counts, rated in combinations
     ]
     assert capacities == [1000.0, 1100.0]
+
+
+def test_pump_solver_compares_head_in_metres_and_calculates_kw() -> None:
+    groups = [{
+        "available_count": 1,
+        "parameters": {
+            "flow_rated": 36.0,
+            "freq_min": 20.0,
+            "freq_max": 50.0,
+            "freq_rated": 50.0,
+        },
+        "artifact": {
+            "kind": "pump_polynomial",
+            "coefficients": {
+                "flow_head": {"intercept": 20.0, "flow": 0.0, "flow_squared": 0.0},
+                "flow_efficiency": {
+                    "intercept": 0.8,
+                    "flow": 0.0,
+                    "flow_squared": 0.0,
+                },
+            },
+        },
+    }]
+    result = _solve_pump_system(
+        groups,
+        target_flow=36.0,
+        resistance=100_000.0,
+        topology="parallel",
+        chiller_count=1,
+        rho_w=1_000.0,
+    )
+    assert result["frequency"] == pytest.approx(50 / 2**0.5)
+    assert result["power"] == pytest.approx(1.22583125)

@@ -3,7 +3,7 @@
   "device_type": "pump",
   "label": "Pump",
   "label_zh": "水泵",
-  "version": 1,
+  "version": 2,
   "sort_order": 20,
   "parameters": [
     {
@@ -23,12 +23,12 @@
       "key": "head_rated",
       "label": "Rated head",
       "label_zh": "额定扬程",
-      "description": "Rated pump differential pressure in the project master-data unit.",
-      "unit": "MPa",
+      "description": "Rated pump head. Use metres of water column, consistent with the pump performance-model output.",
+      "unit": "m",
       "value_type": "number",
       "required": true,
       "exclusive_minimum": 0,
-      "precision": 4,
+      "precision": 2,
       "group": "Rated performance",
       "sort_order": 20
     },

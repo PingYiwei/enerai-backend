@@ -81,5 +81,12 @@ CONFIG = DatasetConfig(
     device_type="cooling_tower",
     label="Cooling tower",
     fields=FIELDS,
+    field_units={
+        "time": "YYYY-MM-DD HH:mm:ss",
+        "t_cw_in": "°C",
+        "t_cw_out": "°C",
+        "t_wb_wea": "°C",
+        "air_water_ratio": "1",
+    },
     validate_rules=validate_rules,
 )
