@@ -54,11 +54,11 @@ def validate_rules(rows: list[NumericRow]) -> list[ValidationRule]:
         error_rule(
             rule_id="chiller_load_ratio_unit",
             name="Chiller load ratio",
-            constraint="0 < load_pct <= 1 (dimensionless ratio, not percent)",
+            constraint="0 < load_pct <= 1.2 (dimensionless ratio, not percent)",
             invalid_rows=[
                 row_number
                 for row_number, values in rows
-                if not 0 < values["load_pct"] <= 1
+                if not 0 < values["load_pct"] <= 1.2
             ],
         ),
         _minimum_difference(

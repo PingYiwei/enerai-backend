@@ -36,7 +36,7 @@ def test_chiller_operating_rules_are_warnings() -> None:
     assert count_valid_rows("chiller", header, rows) == 1
 
 
-def test_chiller_load_percentage_must_use_zero_to_one_ratio() -> None:
+def test_chiller_load_percentage_must_use_ratio_not_percent() -> None:
     content = (
         b"time,t_chw_ret,t_chw_sup,t_cw_sup,t_cw_ret,flow_chw,flow_cw,q_cool,q_reject,"
         b"load_pct,t_evap,t_cond\n"
@@ -47,6 +47,19 @@ def test_chiller_load_percentage_must_use_zero_to_one_ratio() -> None:
     load_rule = next(rule for rule in rules if rule.rule_id == "chiller_load_ratio_unit")
     assert load_rule.severity == "error"
     assert load_rule.invalid_rows == [2]
+
+
+def test_chiller_load_ratio_allows_twenty_percent_overload() -> None:
+    content = (
+        b"time,t_chw_ret,t_chw_sup,t_cw_sup,t_cw_ret,flow_chw,flow_cw,q_cool,q_reject,"
+        b"load_pct,t_evap,t_cond\n"
+        b"2026-01-01 00:00:00,12,7,28,32,600,720,500,620,1.2,4.5,36\n"
+        b"2026-01-01 00:01:00,12,7,28,32,600,720,500,620,1.21,4.5,36\n"
+    )
+    header, rows = decode_csv(content)
+    rules = validate_dataset("chiller", header, rows)
+    load_rule = next(rule for rule in rules if rule.rule_id == "chiller_load_ratio_unit")
+    assert load_rule.invalid_rows == [3]
 
 
 def test_cooling_tower_uses_device_specific_rules() -> None:
