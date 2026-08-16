@@ -30,6 +30,19 @@ async def create_indexes(database: AsyncDatabase[Document]) -> None:
     await database.user_model_settings.create_indexes(
         [IndexModel([("owner_id", ASCENDING)], unique=True)]
     )
+    await database.llm_traces.create_indexes(
+        [
+            IndexModel([("started_at", DESCENDING)]),
+            IndexModel([("owner_id", ASCENDING), ("started_at", DESCENDING)]),
+            IndexModel([("source", ASCENDING), ("started_at", DESCENDING)]),
+            IndexModel([("status", ASCENDING), ("started_at", DESCENDING)]),
+            IndexModel([("provider", ASCENDING), ("model", ASCENDING), ("started_at", DESCENDING)]),
+            IndexModel([("run_id", ASCENDING), ("turn", ASCENDING)]),
+        ]
+    )
+    await database.trace_model_pricing.create_indexes(
+        [IndexModel([("provider", ASCENDING), ("model", ASCENDING)], unique=True)]
+    )
     await database.projects.create_indexes(
         [
             IndexModel([("owner_id", ASCENDING), ("updated_at", DESCENDING)]),

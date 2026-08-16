@@ -9,6 +9,20 @@ type StopReason = Literal["stop", "length", "tool_calls", "cancelled", "error"]
 
 
 @dataclass(frozen=True, slots=True)
+class TraceContext:
+    user_id: str
+    username: str = ""
+    source: str = "unknown"
+    feature: str = ""
+    project_id: str | None = None
+    session_id: str | None = None
+    run_id: str | None = None
+    turn: int | None = None
+    parent_trace_id: str | None = None
+    tags: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ToolCall:
     id: str
     name: str
@@ -63,6 +77,7 @@ class ProviderRequest:
     tools: tuple[ProviderTool, ...] = ()
     temperature: float | None = None
     max_output_tokens: int | None = None
+    trace: TraceContext | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -23,9 +23,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        providers = ProviderRegistry()
-        coordinator = AgentRunCoordinator(resolved, providers)
         async with database_lifespan(resolved) as database:
+            providers = ProviderRegistry(database)
+            coordinator = AgentRunCoordinator(resolved, providers)
             inspection_coordinator = InspectionCoordinator(database, resolved, providers)
             inspection_scheduler = InspectionScheduler(database, inspection_coordinator)
             app.state.database = database

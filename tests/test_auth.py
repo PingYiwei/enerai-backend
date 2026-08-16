@@ -20,6 +20,8 @@ async def test_register_and_authenticate_user() -> None:
     )
     token = await authenticate_user(repository, "ada", "correct-horse", settings)
 
+    assert user.role == "user"
+    assert repository.documents[user.id]["role"] == "user"
     assert token.user == user
     assert decode_access_token(token.access_token, settings) == Principal(
         user_id=user.id,

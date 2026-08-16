@@ -16,6 +16,7 @@ from app.modules.agents.runtime.types import (
     ToolCall,
     ToolCallArgumentsDelta,
     ToolCallStarted,
+    TraceContext,
     Usage,
     UsageUpdated,
 )
@@ -39,6 +40,8 @@ class AgentRunRequest:
     max_output_tokens: int | None = None
     temperature: float | None = None
     context_char_budget: int = 300_000
+    source: str = "unknown"
+    feature: str = "agent_run"
 
 
 @dataclass(slots=True)
@@ -86,6 +89,16 @@ class AgentEngine:
                     tools=tuple(tool.provider_spec() for tool in request.tools),
                     temperature=request.temperature,
                     max_output_tokens=request.max_output_tokens,
+                    trace=TraceContext(
+                        user_id=request.user_id,
+                        source=request.source,
+                        feature=request.feature,
+                        project_id=request.project_id,
+                        session_id=request.session_id,
+                        run_id=request.run_id,
+                        turn=turn,
+                        tags=("agent",),
+                    ),
                 )
                 await emit("message_start", {"role": "assistant", "turn": turn})
 

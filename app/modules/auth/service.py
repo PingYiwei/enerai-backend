@@ -17,6 +17,7 @@ def user_response(document: Document) -> UserResponse:
         id=document["_id"],
         username=document["username"],
         email=document["email"],
+        role=document.get("role", "user"),
         created_at=document["created_at"],
     )
 
@@ -29,6 +30,7 @@ async def register_user(repository: UserRepository, request: RegisterRequest) ->
         "username_key": request.username.strip().casefold(),
         "email": str(request.email).strip().casefold(),
         "password_hash": hash_password(request.password),
+        "role": "user",
         "created_at": now,
         "updated_at": now,
     }
@@ -55,7 +57,7 @@ async def authenticate_user(
 
     user = user_response(document)
     token, expires_at = create_access_token(
-        Principal(user_id=user.id, username=user.username),
+        Principal(user_id=user.id, username=user.username, role=user.role),
         settings,
     )
     return TokenResponse(access_token=token, expires_at=expires_at, user=user)

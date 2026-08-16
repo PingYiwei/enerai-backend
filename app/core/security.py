@@ -20,6 +20,7 @@ _password_hash = PasswordHash.recommended()
 class Principal:
     user_id: str
     username: str
+    role: str = "user"
 
 
 def hash_password(password: str) -> str:
@@ -35,6 +36,7 @@ def create_access_token(principal: Principal, settings: Settings) -> tuple[str, 
     payload: dict[str, Any] = {
         "sub": principal.user_id,
         "username": principal.username,
+        "role": principal.role,
         "iat": datetime.now(UTC),
         "exp": expires_at,
     }
@@ -47,13 +49,14 @@ def decode_access_token(token: str, settings: Settings) -> Principal:
         payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
         user_id = str(payload["sub"])
         username = str(payload["username"])
+        role = str(payload.get("role", "user"))
     except (jwt.PyJWTError, KeyError, TypeError, ValueError) as error:
         raise AppError(
             "invalid_access_token",
             "Access token is invalid or expired",
             status_code=401,
         ) from error
-    return Principal(user_id=user_id, username=username)
+    return Principal(user_id=user_id, username=username, role=role)
 
 
 def create_api_key() -> tuple[str, str]:

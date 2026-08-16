@@ -51,6 +51,7 @@ async def me(database: Database, principal: CurrentPrincipal) -> UserResponse:
         id=document["_id"],
         username=document["username"],
         email=document["email"],
+        role=document.get("role", "user"),
         created_at=document["created_at"],
     )
 

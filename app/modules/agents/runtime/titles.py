@@ -3,12 +3,17 @@ from __future__ import annotations
 import re
 
 from app.modules.agents.providers.base import Provider
-from app.modules.agents.runtime.types import Message, ProviderRequest, TextDelta
+from app.modules.agents.runtime.types import Message, ProviderRequest, TextDelta, TraceContext
 
 _TITLE_PREFIX = re.compile(r"^(?:session\s+)?title\s*:\s*", re.IGNORECASE)
 
 
-async def generate_session_title(provider: Provider, model: str, user_message: str) -> str:
+async def generate_session_title(
+    provider: Provider,
+    model: str,
+    user_message: str,
+    trace: TraceContext | None = None,
+) -> str:
     chunks: list[str] = []
     request = ProviderRequest(
         model=model,
@@ -20,6 +25,7 @@ async def generate_session_title(provider: Provider, model: str, user_message: s
         messages=(Message(role="user", content=user_message[:4000]),),
         temperature=0.2,
         max_output_tokens=48,
+        trace=trace,
     )
     async for event in provider.stream(request):
         if isinstance(event, TextDelta):

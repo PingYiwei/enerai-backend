@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
@@ -19,6 +20,7 @@ from app.modules.agents.runtime.types import (
     Usage,
     UsageUpdated,
 )
+from app.modules.traces.recorder import TraceRecorder
 
 ApiStyle = Literal["responses", "chat_completions"]
 
@@ -38,6 +40,7 @@ class OpenAICompatibleProvider:
         self,
         config: OpenAICompatibleConfig,
         client: AsyncOpenAI | None = None,
+        trace_recorder: TraceRecorder | None = None,
     ) -> None:
         self._config = config
         self._owns_client = client is None
@@ -47,18 +50,39 @@ class OpenAICompatibleProvider:
             default_headers=config.headers,
             timeout=config.timeout_seconds,
         )
+        self._trace_recorder = trace_recorder
 
     async def close(self) -> None:
         if self._owns_client:
             await self._client.close()
 
     async def stream(self, request: ProviderRequest) -> AsyncIterator[ProviderEvent]:
-        if self._config.api_style == "responses":
-            async for event in self._stream_responses(request):
+        trace = (
+            await self._trace_recorder.start(self._config.id, self._config.api_style, request)
+            if self._trace_recorder is not None
+            else None
+        )
+        try:
+            source = (
+                self._stream_responses(request)
+                if self._config.api_style == "responses"
+                else self._stream_chat_completions(request)
+            )
+            async for event in source:
+                if trace is not None:
+                    trace.observe(event)
                 yield event
-            return
-        async for event in self._stream_chat_completions(request):
-            yield event
+        except asyncio.CancelledError as error:
+            if trace is not None:
+                await trace.finish("cancelled", error)
+            raise
+        except Exception as error:
+            if trace is not None:
+                await trace.finish("error", error)
+            raise
+        else:
+            if trace is not None:
+                await trace.finish("success")
 
     async def _stream_chat_completions(
         self, request: ProviderRequest

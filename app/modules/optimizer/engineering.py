@@ -12,7 +12,7 @@ from pymongo.asynchronous.database import AsyncDatabase
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.security import Principal
-from app.modules.agents.runtime.types import Message, ProviderRequest, TextDelta
+from app.modules.agents.runtime.types import Message, ProviderRequest, TextDelta, TraceContext
 from app.modules.auth.model_settings import (
     configured_auxiliary_model,
     read_model_settings,
@@ -772,6 +772,14 @@ async def infer_topologies_with_llm(
         ),
         temperature=0,
         max_output_tokens=900,
+        trace=TraceContext(
+            user_id=principal.user_id,
+            username=principal.username,
+            source="optimizer",
+            feature="engineering_topology_inference",
+            project_id=project_id,
+            tags=("auxiliary", "engineering"),
+        ),
     )
     chunks: list[str] = []
     try:

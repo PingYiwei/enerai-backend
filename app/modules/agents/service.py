@@ -11,7 +11,7 @@ from app.modules.agents.providers.openai_compatible import OpenAICompatibleProvi
 from app.modules.agents.providers.registry import ProviderId, ProviderRegistry
 from app.modules.agents.runtime.engine import AgentEngine, AgentRunRequest
 from app.modules.agents.runtime.titles import generate_session_title
-from app.modules.agents.runtime.types import JsonObject, Message
+from app.modules.agents.runtime.types import JsonObject, Message, TraceContext
 from app.modules.agents.schemas import RunAccepted, RunCreate
 from app.modules.agents.storage.artifacts import artifact_tools
 from app.modules.agents.storage.repository import MongoAgentRepository
@@ -191,7 +191,19 @@ class AgentRunCoordinator:
         model: str,
     ) -> None:
         try:
-            title = await generate_session_title(provider, model, user_message)
+            title = await generate_session_title(
+                provider,
+                model,
+                user_message,
+                TraceContext(
+                    user_id=owner_id,
+                    source="session_title",
+                    feature="automatic_session_title",
+                    session_id=session_id,
+                    run_id=run_id,
+                    tags=("auxiliary",),
+                ),
+            )
             if not title:
                 raise ValueError("Title model returned an empty title")
             updated = await repository.apply_generated_title(
@@ -250,6 +262,7 @@ class AgentRunCoordinator:
                     messages=tuple(messages),
                     tools=self._tools(repository, str(operation.get("surface", "insight"))),
                     context_char_budget=self._settings.agent_context_char_budget,
+                    source=str(operation.get("surface", "insight")),
                 ),
                 emit,
                 checkpoint,

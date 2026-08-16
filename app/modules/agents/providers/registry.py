@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from hashlib import sha256
-from typing import Literal
+from typing import Any, Literal
+
+from pymongo.asynchronous.database import AsyncDatabase
 
 from app.core.errors import AppError
 from app.modules.agents.providers.openai_compatible import (
@@ -9,13 +11,15 @@ from app.modules.agents.providers.openai_compatible import (
     OpenAICompatibleConfig,
     OpenAICompatibleProvider,
 )
+from app.modules.traces.recorder import TraceRecorder
 
 ProviderId = Literal["openai", "openrouter", "bailian"]
 
 
 class ProviderRegistry:
-    def __init__(self) -> None:
+    def __init__(self, database: AsyncDatabase[dict[str, Any]] | None = None) -> None:
         self._providers: dict[tuple[ProviderId, ApiStyle, str, str], OpenAICompatibleProvider] = {}
+        self._trace_recorder = TraceRecorder(database) if database is not None else None
 
     def get(
         self,
@@ -51,7 +55,8 @@ class ProviderRegistry:
                     if provider_id == "openrouter"
                     else {}
                 ),
-            )
+            ),
+            trace_recorder=self._trace_recorder,
         )
         self._providers[key] = provider
         return provider

@@ -1012,6 +1012,8 @@ class InspectionCoordinator:
                 tools=tools,
                 max_turns=max_turns,
                 context_char_budget=self._settings.agent_context_char_budget,
+                source="inspection",
+                feature=surface,
             ),
             emit,
         )
