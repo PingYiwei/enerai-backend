@@ -35,6 +35,7 @@ from app.modules.optimizer.schemas import (
     ModelPreview,
     ModelSummary,
     OptimizationPreflightResult,
+    OptimizationRunList,
     OptimizationRunView,
     OptimizationStrategyCreate,
     OptimizationStrategyList,
@@ -51,6 +52,7 @@ from app.modules.optimizer.strategies import (
     create_strategy,
     delete_strategy,
     latest_run,
+    list_runs,
     list_strategies,
     preflight_strategy,
     read_run,
@@ -118,6 +120,13 @@ async def latest_optimization_run(
     project_id: str, database: Database, principal: CurrentPrincipal
 ) -> OptimizationRunView | None:
     return await latest_run(database, principal, project_id)
+
+
+@router.get("/runs", response_model=OptimizationRunList)
+async def optimization_runs(
+    project_id: str, database: Database, principal: CurrentPrincipal
+) -> OptimizationRunList:
+    return await list_runs(database, principal, project_id)
 
 
 @router.get("/runs/{run_id}", response_model=OptimizationRunView)

@@ -353,6 +353,7 @@ class OptimizationRunView(BaseModel):
     project_id: str
     strategy_id: str
     strategy_name: str
+    strategy_snapshot: OptimizationStrategySummary | None = None
     status: Literal["queued", "running", "completed", "partial", "failed"]
     progress: float = Field(ge=0, le=1)
     current_stage: str = ""
@@ -365,3 +366,22 @@ class OptimizationRunView(BaseModel):
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
+
+
+class OptimizationRunSummary(BaseModel):
+    id: str
+    project_id: str
+    strategy_id: str
+    strategy_name: str
+    status: Literal["queued", "running", "completed", "partial", "failed"]
+    progress: float = Field(ge=0, le=1)
+    counters: OptimizationRunCounters = Field(default_factory=OptimizationRunCounters)
+    failure_summary: dict[str, int] = Field(default_factory=dict)
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class OptimizationRunList(BaseModel):
+    items: list[OptimizationRunSummary]
+    total: int

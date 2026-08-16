@@ -21,7 +21,9 @@ from app.modules.optimizer.schemas import (
     OptimizationPreflightResult,
     OptimizationRange,
     OptimizationRunCounters,
+    OptimizationRunList,
     OptimizationRunStage,
+    OptimizationRunSummary,
     OptimizationRunView,
     OptimizationStrategyCreate,
     OptimizationStrategyList,
@@ -55,8 +57,20 @@ def _run_view(document: Document) -> OptimizationRunView:
     payload = dict(document)
     payload["id"] = str(payload.pop("_id"))
     payload.pop("owner_id", None)
-    payload.pop("strategy_snapshot", None)
     return OptimizationRunView.model_validate(payload)
+
+
+def _run_summary(document: Document) -> OptimizationRunSummary:
+    payload = dict(document)
+    payload["id"] = str(payload.pop("_id"))
+    payload.pop("owner_id", None)
+    payload.pop("strategy_snapshot", None)
+    payload.pop("stages", None)
+    payload.pop("rows", None)
+    payload.pop("current_stage", None)
+    payload.pop("current_condition", None)
+    payload.pop("error", None)
+    return OptimizationRunSummary.model_validate(payload)
 
 
 def _range_values(value: OptimizationRange) -> list[float]:
@@ -1091,3 +1105,20 @@ async def latest_run(
         {"project_id": project_id, "owner_id": principal.user_id}, sort=[("created_at", DESCENDING)]
     )
     return _run_view(document) if document else None
+
+
+async def list_runs(
+    database: AsyncDatabase[Document], principal: Principal, project_id: str
+) -> OptimizationRunList:
+    await owned_project(database, principal, project_id)
+    documents = await (
+        database.optimization_runs.find(
+            {"project_id": project_id, "owner_id": principal.user_id},
+            {"rows": 0, "stages": 0, "strategy_snapshot": 0},
+        )
+        .sort("created_at", DESCENDING)
+        .to_list(None)
+    )
+    return OptimizationRunList(
+        items=[_run_summary(document) for document in documents], total=len(documents)
+    )
